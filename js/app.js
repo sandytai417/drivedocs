@@ -54,7 +54,7 @@
   }
 
   function privacyBlurb() {
-    return 'Editorial private drive on parchment — one operator, no profile page, Drive as the only file store.';
+    return '私人雲端相簿牆 — 單人使用、無個人檔案頁，Drive 是唯一檔案庫。';
   }
 
   function animateBars(root) {
@@ -174,21 +174,49 @@
 
     content.innerHTML =
       '<section class="greeting">' +
+        '<div class="polaroid-field" aria-hidden="true">' +
+          '<span class="polaroid polaroid--1"></span>' +
+          '<span class="polaroid polaroid--2"></span>' +
+          '<span class="polaroid polaroid--3"></span>' +
+          '<span class="polaroid polaroid--4"></span>' +
+          '<span class="polaroid polaroid--5"></span>' +
+          '<span class="polaroid polaroid--6"></span>' +
+        '</div>' +
+        '<p class="greeting__eyebrow">DRIVEDOCS</p>' +
         '<h1>' + greetingText() + '</h1>' +
         '<p>' + privacyBlurb() + '</p>' +
+        '<div class="greeting__actions">' +
+          '<button type="button" class="btn btn--primary" id="hero-upload">新增／上傳</button>' +
+          '<button type="button" class="btn" id="hero-customers">瀏覽客戶</button>' +
+        '</div>' +
       '</section>' +
 
+      '<div class="feature-grid">' +
+        '<button type="button" class="feature-card" data-go="customers">' +
+          '<div class="feature-card__media feature-card__media--1"></div>' +
+          '<div class="feature-card__label">依注音瀏覽</div>' +
+        '</button>' +
+        '<button type="button" class="feature-card" data-go="upload">' +
+          '<div class="feature-card__media feature-card__media--2"></div>' +
+          '<div class="feature-card__label">新增與上傳</div>' +
+        '</button>' +
+        '<button type="button" class="feature-card" data-go="reports">' +
+          '<div class="feature-card__media feature-card__media--3"></div>' +
+          '<div class="feature-card__label">每月回報</div>' +
+        '</button>' +
+      '</div>' +
+
       '<div class="overview">' +
-        statCard('👥', d.totalCustomers, '客戶總數') +
+        statCard('·', d.totalCustomers, '客戶總數') +
         statCard('↑', d.todayOrganized, '今日整理') +
         statCard('✔', d.todayDone, '今日完成') +
         statCard('%', d.completionRate + '%', '完成率') +
-        statCard('📄', d.totalFiles, '文件總計') +
+        statCard('▣', d.totalFiles, '文件總計') +
       '</div>' +
 
       '<div class="stack">' +
         '<section class="card">' +
-          '<div class="card__hd"><div><h2 class="card__title">Recent Update</h2><p class="card__sub">最近活動</p></div>' +
+          '<div class="card__hd"><div><h2 class="card__title">最近更新</h2><p class="card__sub">Recent activity</p></div>' +
           '<button type="button" class="card__link" id="view-all-activity">查看全部</button></div>' +
           '<div class="card__bd">' + renderActivity(d.activity) + '</div>' +
         '</section>' +
@@ -196,6 +224,15 @@
       '</div>';
 
     $('view-all-activity').onclick = function () { setPage('reports'); };
+    $('hero-upload').onclick = function () { state.uploadMode = 'new'; setPage('upload'); };
+    $('hero-customers').onclick = function () { setPage('customers'); };
+    content.querySelectorAll('.feature-card[data-go]').forEach(function (el) {
+      el.onclick = function () {
+        var go = el.getAttribute('data-go');
+        if (go === 'upload') state.uploadMode = 'new';
+        setPage(go);
+      };
+    });
     bindCustomerList(content, list);
   }
 

@@ -2,7 +2,7 @@
 
 **Organize Client Documents Directly in Google Drive.**
 
-這份 repo 目前以 **GitHub Pages 靜態 Demo** 為主，可直接在瀏覽器體驗客戶管理、注音排序、完成度與報表。  
+這份 repo 目前以 **GitHub Pages 靜態 Demo** 為主，可直接在瀏覽器體驗客戶管理、注音排序、完成度與報表。介面採用 **Cosmos** 亞麻畫廊風（linen `#f7f5f3`、ink 單色 chrome、Fraunces 細字重）。  
 正式接 Google Drive / Sheets 的 Apps Script 原始碼在 [`apps-script/`](apps-script/)。
 
 ---
