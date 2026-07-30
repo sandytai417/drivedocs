@@ -5,20 +5,11 @@
     page: 'dashboard',
     sortBy: 'zhuyin',
     customerId: null,
+    activeCategory: null,
     searchTimer: null,
-    sidebarOpen: false,
+    searchQuery: '',
     uploadPreset: null,
-    searchQuery: ''
-  };
-
-  var TITLES = {
-    dashboard: 'Dashboard',
-    customers: 'Customers',
-    upload: 'Upload',
-    reports: 'Reports',
-    settings: 'Settings',
-    detail: '客戶詳情',
-    search: '搜尋結果'
+    uploadQueue: []
   };
 
   function $(id) { return document.getElementById(id); }
@@ -28,25 +19,48 @@
     el.className = 'toast' + (isError ? ' toast--error' : '');
     el.textContent = msg;
     $('toasts').appendChild(el);
-    setTimeout(function () { el.remove(); }, 3200);
+    setTimeout(function () { el.remove(); }, 3000);
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   function formatDate(iso) {
     if (!iso) return '—';
     var s = String(iso);
-    return s.length >= 10 ? s.slice(0, 10).replace(/-/g, '/') : s;
+    return s.length >= 16 ? s.slice(0, 16).replace('T', ' ').replace(/-/g, '/') : s.slice(0, 10).replace(/-/g, '/');
   }
 
-  function escapeHtml(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+  function formatSize(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+
+  function extClass(name) {
+    var ext = String(name).split('.').pop().toLowerCase();
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].indexOf(ext) >= 0) return 'is-img';
+    if (['doc', 'docx', 'xls', 'xlsx'].indexOf(ext) >= 0) return 'is-doc';
+    return '';
+  }
+
+  function extLabel(name) {
+    return String(name).split('.').pop().toUpperCase().slice(0, 4) || 'FILE';
+  }
+
+  function animateBars(root) {
+    requestAnimationFrame(function () {
+      (root || document).querySelectorAll('[data-width]').forEach(function (el) {
+        el.style.width = el.getAttribute('data-width') + '%';
+      });
+    });
   }
 
   function closeSidebar() {
-    state.sidebarOpen = false;
     $('sidebar').classList.remove('is-open');
   }
 
@@ -64,186 +78,290 @@
     opts = opts || {};
     state.page = page;
     if (opts.customerId) state.customerId = opts.customerId;
-    document.querySelectorAll('.nav__item').forEach(function (btn) {
+    if (opts.category !== undefined) state.activeCategory = opts.category;
+    document.querySelectorAll('.sider__item').forEach(function (btn) {
       btn.classList.toggle('is-active', btn.getAttribute('data-page') === page);
     });
-    $('page-title').textContent = opts.title || TITLES[page] || page;
     closeSidebar();
     render();
   }
 
-  function animateBars(root) {
-    requestAnimationFrame(function () {
-      root.querySelectorAll('[data-width]').forEach(function (el) {
-        el.style.width = el.getAttribute('data-width') + '%';
-      });
-    });
-  }
-
   function render() {
     var content = $('content');
-    var actions = $('topbar-actions');
-    actions.innerHTML = '';
     try {
-      if (state.page === 'dashboard') renderDashboard(content, actions);
-      else if (state.page === 'customers') renderCustomers(content, actions);
-      else if (state.page === 'detail') renderDetail(content, actions);
-      else if (state.page === 'upload') renderUpload(content, actions);
-      else if (state.page === 'reports') renderReports(content, actions);
-      else if (state.page === 'settings') renderSettings(content, actions);
-      else if (state.page === 'search') renderSearch(content, actions);
+      if (state.page === 'dashboard') renderDashboard(content);
+      else if (state.page === 'customers') renderCustomers(content);
+      else if (state.page === 'detail') renderDetail(content);
+      else if (state.page === 'upload') renderUpload(content);
+      else if (state.page === 'reports') renderReports(content);
+      else if (state.page === 'settings') renderSettings(content);
+      else if (state.page === 'search') renderSearch(content);
       animateBars(content);
     } catch (err) {
-      content.innerHTML = '<div class="panel"><p>' + escapeHtml(err.message || err) + '</p></div>';
+      content.innerHTML = '<div class="card card__bd"><p>' + escapeHtml(err.message || err) + '</p></div>';
       toast(err.message || String(err), true);
     }
   }
 
-  function stat(label, value, hint) {
-    return '<article class="stat">' +
-      '<p class="stat__label">' + escapeHtml(label) + '</p>' +
-      '<p class="stat__value">' + escapeHtml(String(value)) + '</p>' +
-      (hint ? '<p class="stat__hint">' + escapeHtml(hint) + '</p>' : '') +
-      '</article>';
+  function renderDashboard(content) {
+    var d = DriveDocsStore.getDashboard();
+    var recent = DriveDocsStore.listCustomers('updated').customers.slice(0, 6);
+
+    content.innerHTML =
+      '<section class="card welcome">' +
+        '<div class="welcome__avatar">S</div>' +
+        '<div><p class="welcome__hi">你好，示範使用者！</p>' +
+        '<p class="welcome__lead">今天也把客戶文件整理得更清楚一點。Google Drive is the database — DriveDocs is the interface.</p></div>' +
+        '<div class="welcome__brand">DriveDocs</div>' +
+      '</section>' +
+
+      '<div class="kpi-grid">' +
+        kpi('總客戶數', d.totalCustomers, '資料夾', '📁') +
+        kpi('今日新增', d.todayNew, '新客戶', '＋') +
+        kpi('今日整理', d.todayOrganized, '上傳次數', '↑') +
+        kpi('待整理', d.pending, '未滿 100%', '…') +
+        kpi('完成率', d.completionRate + '%', '全體平均', '✔') +
+      '</div>' +
+
+      '<div class="work-grid">' +
+        '<section class="card">' +
+          '<div class="card__hd"><h2 class="card__title">進行中的客戶資料夾</h2>' +
+          '<button type="button" class="btn btn--primary" id="btn-new-customer">新建客戶</button></div>' +
+          '<div class="card__bd"><div class="project-grid" id="project-grid">' +
+            (recent.length ? recent.map(projectCard).join('') : '<p class="empty">尚無客戶</p>') +
+          '</div></div>' +
+        '</section>' +
+        '<div style="display:grid;gap:0.85rem">' +
+          '<section class="card">' +
+            '<div class="card__hd"><h2 class="card__title">快捷操作</h2></div>' +
+            '<div class="card__bd"><div class="quick">' +
+              '<button type="button" data-go="customers">客戶資料夾</button>' +
+              '<button type="button" data-go="upload">文件上傳</button>' +
+              '<button type="button" data-go="reports">每日報表</button>' +
+              '<button type="button" id="btn-quick-new">新增客戶</button>' +
+            '</div></div>' +
+          '</section>' +
+          '<section class="card">' +
+            '<div class="card__hd"><h2 class="card__title">動態</h2></div>' +
+            '<div class="card__bd">' + renderActivity(d.activity || []) + '</div>' +
+          '</section>' +
+        '</div>' +
+      '</div>' +
+
+      '<section class="card">' +
+        '<div class="card__hd"><h2 class="card__title">整理進度</h2></div>' +
+        '<div class="card__bd" style="padding:0;overflow:auto">' +
+          '<table class="file-table"><thead><tr><th>客戶</th><th>電話</th><th>更新日期</th><th>完成度</th></tr></thead><tbody>' +
+          DriveDocsStore.listCustomers('completion').customers.slice(0, 8).map(function (c) {
+            return '<tr style="cursor:pointer" data-id="' + escapeHtml(c.id) + '" data-name="' + escapeHtml(c.name) + '">' +
+              '<td><strong>' + escapeHtml(c.name) + '</strong></td>' +
+              '<td>' + escapeHtml(c.phone || '—') + '</td>' +
+              '<td>' + escapeHtml(formatDate(c.updatedAt)) + '</td>' +
+              '<td style="min-width:140px"><div class="completion__bar"><div class="completion__fill" data-width="' + c.completion + '"></div></div>' +
+              '<div class="completion__pct">' + c.completion + '%</div></td></tr>';
+          }).join('') +
+          '</tbody></table></div></section>';
+
+    $('btn-new-customer').onclick = showCreateCustomerModal;
+    $('btn-quick-new').onclick = showCreateCustomerModal;
+    content.querySelectorAll('[data-go]').forEach(function (btn) {
+      btn.onclick = function () { setPage(btn.getAttribute('data-go')); };
+    });
+    content.querySelectorAll('#project-grid .project, tbody tr[data-id], [data-customer-id]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var id = el.getAttribute('data-id') || el.getAttribute('data-customer-id');
+        var name = el.getAttribute('data-name');
+        if (id) setPage('detail', { customerId: id, title: name, category: null });
+      });
+    });
   }
 
-  function folderRow(c) {
-    return '<button type="button" class="folder-row" data-id="' + escapeHtml(c.id) + '" data-name="' + escapeHtml(c.name) + '">' +
-      '<span class="folder-icon" aria-hidden="true"></span>' +
-      '<span><p class="folder-row__name">' + escapeHtml(c.name) + '</p>' +
-      '<p class="folder-row__meta">' + escapeHtml(c.phone || '無電話') + ' · 更新 ' + escapeHtml(formatDate(c.updatedAt)) + '</p></span>' +
-      '<span class="completion">' +
-        '<div class="completion__bar"><div class="completion__fill" data-width="' + (c.completion || 0) + '"></div></div>' +
-        '<div class="completion__pct">' + (c.completion || 0) + '%</div>' +
-      '</span></button>';
+  function kpi(label, value, hint, icon) {
+    return '<article class="card kpi"><div class="kpi__icon">' + icon + '</div>' +
+      '<p class="kpi__label">' + escapeHtml(label) + '</p>' +
+      '<p class="kpi__value">' + escapeHtml(String(value)) + '</p>' +
+      '<p class="kpi__hint">' + escapeHtml(hint) + '</p></article>';
+  }
+
+  function projectCard(c) {
+    return '<button type="button" class="project" data-id="' + escapeHtml(c.id) + '" data-name="' + escapeHtml(c.name) + '">' +
+      '<div class="project__top"><span class="project__folder"></span><div>' +
+      '<p class="project__name">' + escapeHtml(c.name) + '</p>' +
+      '<p class="project__meta">' + escapeHtml(c.phone || '無電話') + ' · ' + escapeHtml(formatDate(c.updatedAt)) + '</p></div></div>' +
+      '<div class="project__bar"><div class="project__fill" data-width="' + (c.completion || 0) + '"></div></div>' +
+      '</button>';
   }
 
   function renderActivity(items) {
-    if (!items.length) return '<p class="empty">尚無活動紀錄</p>';
-    return '<ul class="activity">' + items.map(function (a) {
+    if (!items.length) return '<p class="empty">尚無動態</p>';
+    return '<ul class="activity">' + items.slice(0, 8).map(function (a) {
       return '<li class="activity__item" data-customer-id="' + escapeHtml(a.customerId) + '" data-name="' + escapeHtml(a.customerName) + '" style="cursor:pointer">' +
-        '<span class="activity__check">✔</span>' +
+        '<span class="activity__dot">' + escapeHtml((a.customerName || '?').charAt(0)) + '</span>' +
         '<div><p class="activity__name">' + escapeHtml(a.customerName || '—') + '</p>' +
         '<p class="activity__detail">' + escapeHtml(a.detail) + '</p></div>' +
         '<span class="activity__time">' + escapeHtml(a.time || '') + '</span></li>';
     }).join('') + '</ul>';
   }
 
-  function renderDashboard(content, actions) {
-    actions.innerHTML = '<button type="button" class="btn btn--primary" id="btn-new-customer">新增客戶</button>';
-    var d = DriveDocsStore.getDashboard();
-    content.innerHTML =
-      '<section class="hero-strip">' +
-        '<p class="hero-strip__brand">DriveDocs</p>' +
-        '<p class="hero-strip__lead">Organize Client Documents Directly in Google Drive. 此為 GitHub Pages Demo，資料存在瀏覽器本機。</p>' +
-      '</section>' +
-      '<div class="stat-grid">' +
-        stat('總客戶數', d.totalCustomers) +
-        stat('今日新增', d.todayNew) +
-        stat('今日整理', d.todayOrganized, '上傳／歸檔次數') +
-        stat('待整理', d.pending, '完成度未滿 100%') +
-        stat('文件完成率', d.completionRate + '%', '全體平均') +
-        stat('最近更新', d.recentUpdates, '今日異動') +
-      '</div>' +
-      '<section class="panel"><h2 class="panel__title">Recent Activity</h2>' + renderActivity(d.activity || []) + '</section>';
-    $('btn-new-customer').onclick = showCreateCustomerModal;
-    content.querySelectorAll('[data-customer-id]').forEach(function (el) {
-      el.addEventListener('click', function () {
-        setPage('detail', { customerId: el.getAttribute('data-customer-id'), title: el.getAttribute('data-name') });
-      });
-    });
-  }
-
-  function renderCustomers(content, actions) {
-    actions.innerHTML = '<button type="button" class="btn btn--primary" id="btn-new-customer">新增客戶</button>';
+  function renderCustomers(content) {
     var data = DriveDocsStore.listCustomers(state.sortBy);
-    var sort = data.sortBy || 'zhuyin';
-    var toolbar =
-      '<div class="toolbar"><div class="seg" id="sort-seg">' +
-        segBtn('zhuyin', '注音', sort) +
-        segBtn('updated', '最近更新', sort) +
-        segBtn('created', '建立日期', sort) +
-        segBtn('completion', '完成度', sort) +
-      '</div><span style="color:var(--muted);font-size:0.88rem">共 ' + data.customers.length + ' 位客戶</span></div>';
+    var sort = data.sortBy;
 
-    var body;
-    if (!data.customers.length) {
-      body = '<div class="panel"><p class="empty">尚未建立客戶。</p></div>';
-    } else if (sort === 'zhuyin' && data.groups) {
-      body = '<div class="explorer">' + data.groups.map(function (g) {
-        return '<div class="zhuyin-group">' +
-          '<div class="zhuyin-group__head"><span>' + escapeHtml(g.initial) + '</span><span class="zhuyin-group__rule"></span></div>' +
-          g.customers.map(folderRow).join('') + '</div>';
-      }).join('') + '</div>';
-    } else {
-      body = '<div class="explorer">' + data.customers.map(folderRow).join('') + '</div>';
-    }
+    content.innerHTML =
+      '<div class="breadcrumb"><button type="button" id="bc-root">客戶資料</button><span>/</span><strong>全部客戶</strong></div>' +
+      '<div class="toolbar">' +
+        '<button type="button" class="btn btn--primary" id="btn-new-customer">新建資料夾</button>' +
+        '<button type="button" class="btn" id="btn-go-upload">上傳</button>' +
+        '<div class="seg" id="sort-seg">' +
+          segBtn('zhuyin', '注音', sort) +
+          segBtn('updated', '最近更新', sort) +
+          segBtn('created', '建立日期', sort) +
+          segBtn('completion', '完成度', sort) +
+        '</div>' +
+        '<span style="color:var(--muted);font-size:0.86rem;margin-left:auto">共 ' + data.customers.length + ' 個資料夾</span>' +
+      '</div>' +
+      '<section class="card"><div class="card__bd" style="padding:0.75rem">' +
+        (data.customers.length
+          ? (sort === 'zhuyin' && data.groups
+              ? data.groups.map(function (g) {
+                  return '<div class="zhuyin-group"><div class="zhuyin-group__head"><span>' + escapeHtml(g.initial) + '</span><span class="zhuyin-group__rule"></span></div>' +
+                    '<div class="folder-strip">' + g.customers.map(folderTile).join('') + '</div></div>';
+                }).join('')
+              : '<div class="folder-strip">' + data.customers.map(folderTile).join('') + '</div>')
+          : '<p class="empty">尚無客戶資料夾</p>') +
+      '</div></section>';
 
-    content.innerHTML = toolbar + body;
     $('btn-new-customer').onclick = showCreateCustomerModal;
+    $('btn-go-upload').onclick = function () { setPage('upload'); };
+    $('bc-root').onclick = function () { setPage('customers'); };
     $('sort-seg').onclick = function (e) {
       var btn = e.target.closest('button[data-sort]');
       if (!btn) return;
       state.sortBy = btn.getAttribute('data-sort');
-      renderCustomers(content, actions);
+      renderCustomers(content);
       animateBars(content);
     };
-    content.querySelectorAll('.folder-row').forEach(function (row) {
-      row.addEventListener('click', function () {
-        setPage('detail', { customerId: row.getAttribute('data-id'), title: row.getAttribute('data-name') });
-      });
+    content.querySelectorAll('.folder-tile').forEach(function (tile) {
+      tile.onclick = function () {
+        setPage('detail', { customerId: tile.getAttribute('data-id'), category: null });
+      };
     });
+  }
+
+  function folderTile(c) {
+    return '<button type="button" class="folder-tile" data-id="' + escapeHtml(c.id) + '">' +
+      '<div class="folder-tile__ico"></div>' +
+      '<p class="folder-tile__name">' + escapeHtml(c.name) + '</p>' +
+      '<p class="folder-tile__meta">' + (c.completion || 0) + '% · ' + escapeHtml(formatDate(c.updatedAt).slice(0, 10)) + '</p>' +
+      '</button>';
   }
 
   function segBtn(value, label, current) {
     return '<button type="button" data-sort="' + value + '" class="' + (current === value ? 'is-active' : '') + '">' + label + '</button>';
   }
 
-  function renderDetail(content, actions) {
+  function renderDetail(content) {
     var data = DriveDocsStore.getCustomer(state.customerId);
     var c = data.customer;
-    var comp = data.completion;
-    $('page-title').textContent = c.name;
-    actions.innerHTML =
-      '<button type="button" class="btn btn--ghost" id="btn-back">← 客戶列表</button>' +
-      '<button type="button" class="btn" id="btn-save">儲存</button>' +
-      '<button type="button" class="btn btn--danger" id="btn-del">刪除</button>';
+    var cats = data.categories || [];
+    var active = state.activeCategory;
+    if (active && cats.indexOf(active) === -1) active = null;
 
-    var checklist = (comp.checklist || []).map(function (item) {
+    var files = [];
+    if (active) {
+      files = (data.filesByCategory[active] || []).slice();
+    } else {
+      cats.forEach(function (cat) {
+        (data.filesByCategory[cat] || []).forEach(function (f) {
+          files.push(Object.assign({}, f, { category: f.category || cat }));
+        });
+      });
+    }
+
+    var checklist = (data.completion.checklist || []).map(function (item) {
       return '<div class="checklist__item"><span class="' + (item.done ? 'ok' : 'no') + '">' +
-        (item.done ? '✔' : '✘') + '</span><span>' + escapeHtml(item.category) + '</span></div>';
-    }).join('');
-
-    var cats = (data.categories || []).map(function (cat) {
-      var files = (data.filesByCategory && data.filesByCategory[cat]) || [];
-      var list = files.length
-        ? '<ul class="file-list">' + files.map(function (f) {
-            return '<li class="file-row"><div><p class="file-row__name">' + escapeHtml(f.name) + '</p>' +
-              '<p class="file-row__meta">' + escapeHtml(formatDate(f.updatedAt)) + ' · Demo</p></div>' +
-              '<div class="file-actions">' +
-              '<button type="button" class="btn btn--ghost btn-preview">預覽</button>' +
-              '<button type="button" class="btn btn--danger btn-del-file" data-file-id="' + escapeHtml(f.id) + '" data-file-name="' + escapeHtml(f.name) + '">刪除</button>' +
-              '</div></li>';
-          }).join('') + '</ul>'
-        : '<p class="empty">尚無文件</p>';
-      return '<section class="cat-block"><div class="cat-block__head"><span>' + escapeHtml(cat) + '</span>' +
-        '<button type="button" class="btn btn--ghost btn-upload-here" data-cat="' + escapeHtml(cat) + '">上傳</button></div>' + list + '</section>';
+        (item.done ? '✔' : '✘') + '</span><span>' + escapeHtml(item.category) + '（' + item.count + '）</span></div>';
     }).join('');
 
     content.innerHTML =
-      '<div class="detail"><aside class="panel detail__side">' +
-        '<div class="avatar">' + escapeHtml((c.name || '?').charAt(0)) + '</div>' +
-        '<div class="field"><label>姓名</label><input id="c-name" value="' + escapeHtml(c.name) + '"></div>' +
-        '<div class="field"><label>電話</label><input id="c-phone" value="' + escapeHtml(c.phone) + '"></div>' +
-        '<div class="field"><label>Email</label><input id="c-email" value="' + escapeHtml(c.email) + '"></div>' +
-        '<div class="field"><label>標籤（逗號分隔）</label><input id="c-tags" value="' + escapeHtml((c.tags || []).join(', ')) + '"></div>' +
-        '<div class="field"><label>備註</label><textarea id="c-notes">' + escapeHtml(c.notes) + '</textarea></div>' +
-        '<div class="completion" style="text-align:left;min-width:0">' +
-          '<div class="completion__bar"><div class="completion__fill" data-width="' + comp.percent + '"></div></div>' +
-          '<div class="completion__pct">完成度 ' + comp.percent + '%（' + comp.filled + '/' + comp.total + '）</div></div>' +
-        '<div class="checklist">' + checklist + '</div></aside><div>' + cats + '</div></div>';
+      '<div class="breadcrumb">' +
+        '<button type="button" id="bc-root">客戶資料</button><span>/</span>' +
+        '<button type="button" id="bc-customer">' + escapeHtml(c.name) + '</button>' +
+        (active ? '<span>/</span><strong>' + escapeHtml(active) + '</strong>' : '<span>/</span><strong>全部文件</strong>') +
+      '</div>' +
 
-    $('btn-back').onclick = function () { setPage('customers'); };
+      '<div class="detail-grid">' +
+        '<aside class="card">' +
+          '<div class="card__hd"><h2 class="card__title">客戶資料</h2></div>' +
+          '<div class="card__bd">' +
+            '<div class="field"><label>姓名</label><input id="c-name" value="' + escapeHtml(c.name) + '"></div>' +
+            '<div class="field"><label>電話</label><input id="c-phone" value="' + escapeHtml(c.phone) + '"></div>' +
+            '<div class="field"><label>Email</label><input id="c-email" value="' + escapeHtml(c.email) + '"></div>' +
+            '<div class="field"><label>標籤</label><input id="c-tags" value="' + escapeHtml((c.tags || []).join(', ')) + '"></div>' +
+            '<div class="field"><label>備註</label><textarea id="c-notes">' + escapeHtml(c.notes) + '</textarea></div>' +
+            '<div class="completion" style="text-align:left;min-width:0;margin-bottom:0.5rem">' +
+              '<div class="completion__bar"><div class="completion__fill" data-width="' + data.completion.percent + '"></div></div>' +
+              '<div class="completion__pct">完成度 ' + data.completion.percent + '%</div></div>' +
+            '<div class="checklist">' + checklist + '</div>' +
+            '<div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.85rem">' +
+              '<button type="button" class="btn btn--primary" id="btn-save">儲存</button>' +
+              '<button type="button" class="btn btn--danger" id="btn-del">刪除</button>' +
+            '</div>' +
+          '</div>' +
+        '</aside>' +
+
+        '<div>' +
+          '<div class="toolbar">' +
+            '<button type="button" class="btn btn--primary" id="btn-upload-here">上傳</button>' +
+            '<button type="button" class="btn" id="btn-show-all">全部文件</button>' +
+          '</div>' +
+          '<section class="card" style="margin-bottom:0.85rem">' +
+            '<div class="card__hd"><h2 class="card__title">分類資料夾</h2></div>' +
+            '<div class="card__bd"><div class="folder-strip">' +
+              cats.map(function (cat) {
+                var count = (data.filesByCategory[cat] || []).length;
+                return '<button type="button" class="folder-tile' + (active === cat ? ' is-active' : '') + '" data-cat="' + escapeHtml(cat) + '">' +
+                  '<div class="folder-tile__ico"></div>' +
+                  '<p class="folder-tile__name">' + escapeHtml(cat) + '</p>' +
+                  '<p class="folder-tile__meta">' + count + ' 個檔案</p></button>';
+              }).join('') +
+            '</div></div>' +
+          '</section>' +
+          '<section class="card">' +
+            '<div class="card__hd"><h2 class="card__title">' + (active ? escapeHtml(active) : '文件列表') + '</h2>' +
+            '<span style="color:var(--muted);font-size:0.84rem">' + files.length + ' 個檔案</span></div>' +
+            '<div class="card__bd" style="padding:0;overflow:auto">' +
+              (files.length
+                ? '<table class="file-table"><thead><tr><th>檔名</th><th>大小</th><th>分類</th><th>修改時間</th><th></th></tr></thead><tbody>' +
+                  files.map(function (f) {
+                    return '<tr><td><div class="file-name"><span class="file-ext ' + extClass(f.name) + '">' + escapeHtml(extLabel(f.name)) + '</span>' +
+                      escapeHtml(f.name) + '</div></td>' +
+                      '<td>' + escapeHtml(formatSize(f.size)) + '</td>' +
+                      '<td>' + escapeHtml(f.category || active || '—') + '</td>' +
+                      '<td>' + escapeHtml(formatDate(f.updatedAt)) + '</td>' +
+                      '<td><div class="file-actions">' +
+                      '<button type="button" class="btn btn--ghost btn-preview">預覽</button>' +
+                      '<button type="button" class="btn btn--danger btn-del-file" data-file-id="' + escapeHtml(f.id) + '" data-file-name="' + escapeHtml(f.name) + '">刪除</button>' +
+                      '</div></td></tr>';
+                  }).join('') + '</tbody></table>'
+                : '<p class="empty">此資料夾尚無文件，點「上傳」開始整理</p>') +
+            '</div>' +
+          '</section>' +
+        '</div>' +
+      '</div>';
+
+    $('bc-root').onclick = function () { setPage('customers'); };
+    $('bc-customer').onclick = function () { setPage('detail', { customerId: c.id, category: null }); };
+    $('btn-show-all').onclick = function () { setPage('detail', { customerId: c.id, category: null }); };
+    $('btn-upload-here').onclick = function () {
+      state.uploadPreset = { customerId: c.id, category: active || cats[0] };
+      setPage('upload');
+    };
+    content.querySelectorAll('.folder-tile[data-cat]').forEach(function (tile) {
+      tile.onclick = function () {
+        setPage('detail', { customerId: c.id, category: tile.getAttribute('data-cat') });
+      };
+    });
     $('btn-save').onclick = function () {
       try {
         DriveDocsStore.updateCustomer(c.id, {
@@ -254,7 +372,7 @@
           notes: $('c-notes').value
         });
         toast('已儲存');
-        renderDetail(content, actions);
+        renderDetail(content);
         animateBars(content);
       } catch (err) { toast(err.message || err, true); }
     };
@@ -264,12 +382,6 @@
       toast('已刪除');
       setPage('customers');
     };
-    content.querySelectorAll('.btn-upload-here').forEach(function (btn) {
-      btn.onclick = function () {
-        state.uploadPreset = { customerId: c.id, category: btn.getAttribute('data-cat') };
-        setPage('upload');
-      };
-    });
     content.querySelectorAll('.btn-preview').forEach(function (btn) {
       btn.onclick = function () { toast('Demo 模式：正式版會開啟 Google Drive 預覽'); };
     });
@@ -282,16 +394,16 @@
           fileName: btn.getAttribute('data-file-name')
         });
         toast('已刪除文件');
-        renderDetail(content, actions);
+        renderDetail(content);
         animateBars(content);
       };
     });
   }
 
   function renderUpload(content) {
-    var data = DriveDocsStore.listCustomers('zhuyin');
+    var customers = DriveDocsStore.listCustomers('zhuyin').customers;
     var settings = DriveDocsStore.getSettings();
-    var options = data.customers.map(function (c) {
+    var options = customers.map(function (c) {
       var sel = state.uploadPreset && state.uploadPreset.customerId === c.id ? ' selected' : '';
       return '<option value="' + escapeHtml(c.id) + '"' + sel + '>' + escapeHtml(c.name) + '</option>';
     }).join('');
@@ -301,114 +413,200 @@
     }).join('');
 
     content.innerHTML =
-      '<div class="dropzone" id="dropzone">' +
-        '<p class="dropzone__title">拖曳上傳</p>' +
-        '<p class="dropzone__hint">PDF · JPG · PNG · DOCX · XLSX（Demo 只記錄檔名，不存檔案內容）</p>' +
-        '<p style="margin-top:1rem"><label class="btn btn--primary">選擇檔案<input type="file" id="file-input" hidden accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx"></label></p>' +
-      '</div>' +
-      '<div class="upload-form panel" style="margin-top:1rem">' +
-        '<div class="field"><label>客戶</label><select id="up-customer"><option value="">請選擇</option>' + options + '</select></div>' +
-        '<div class="field"><label>分類</label><select id="up-category">' + catOpts + '</select></div>' +
-        '<div class="field"><label>已選檔案</label><input id="up-filename" readonly placeholder="尚未選擇"></div>' +
-        '<button type="button" class="btn btn--accent" id="btn-upload" disabled>Upload（Demo）</button>' +
+      '<div class="breadcrumb"><strong>文件上傳</strong></div>' +
+      '<div class="upload-layout">' +
+        '<section class="card">' +
+          '<div class="card__hd"><h2 class="card__title">選擇檔案</h2></div>' +
+          '<div class="card__bd">' +
+            '<div class="dropzone" id="dropzone">' +
+              '<p class="dropzone__title">拖曳檔案到這裡</p>' +
+              '<p class="dropzone__hint">支援 PDF / JPG / PNG / DOCX / XLSX</p>' +
+              '<p style="margin-top:1rem"><label class="btn btn--primary">選擇檔案<input type="file" id="file-input" hidden multiple accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx"></label></p>' +
+            '</div>' +
+            '<div style="margin-top:1rem">' +
+              '<div class="field"><label>上傳到客戶資料夾</label><select id="up-customer"><option value="">請選擇</option>' + options + '</select></div>' +
+              '<div class="field"><label>分類資料夾</label><select id="up-category">' + catOpts + '</select></div>' +
+            '</div>' +
+          '</div>' +
+        '</section>' +
+        '<section class="card">' +
+          '<div class="card__hd"><h2 class="card__title">上傳佇列</h2>' +
+          '<button type="button" class="btn btn--primary" id="btn-start-upload">開始上傳</button></div>' +
+          '<div class="card__bd" id="queue-box">' + renderQueue() + '</div>' +
+        '</section>' +
       '</div>';
 
-    var selectedFile = null;
-    function pickFile(file) {
-      if (!file) return;
-      selectedFile = file;
-      $('up-filename').value = file.name + ' (' + Math.round(file.size / 1024) + ' KB)';
-      $('btn-upload').disabled = false;
+    bindUploadHandlers(content);
+  }
+
+  function renderQueue() {
+    if (!state.uploadQueue.length) {
+      return '<p class="empty">尚未加入檔案<br>拖曳或選擇後會顯示在這裡</p>';
     }
+    return '<ul class="queue">' + state.uploadQueue.map(function (item, idx) {
+      return '<li class="queue__item" data-idx="' + idx + '">' +
+        '<div><p class="queue__name">' + escapeHtml(item.name) + '</p>' +
+        '<p class="queue__meta">' + escapeHtml(formatSize(item.size)) + '</p>' +
+        '<div class="progress"><span style="width:' + (item.progress || 0) + '%"></span></div></div>' +
+        '<div style="text-align:right">' +
+          '<div class="queue__status">' + escapeHtml(item.status || '等待中') + '</div>' +
+          '<button type="button" class="btn btn--ghost btn-rm-q" data-idx="' + idx + '" style="margin-top:0.35rem">移除</button>' +
+        '</div></li>';
+    }).join('') + '</ul>';
+  }
+
+  function bindUploadHandlers(content) {
+    function refreshQueue() {
+      $('queue-box').innerHTML = renderQueue();
+      $('queue-box').querySelectorAll('.btn-rm-q').forEach(function (btn) {
+        btn.onclick = function () {
+          state.uploadQueue.splice(Number(btn.getAttribute('data-idx')), 1);
+          refreshQueue();
+        };
+      });
+    }
+
+    function addFiles(fileList) {
+      Array.prototype.forEach.call(fileList || [], function (file) {
+        state.uploadQueue.push({
+          name: file.name,
+          size: file.size,
+          mimeType: file.type || 'application/octet-stream',
+          file: file,
+          progress: 0,
+          status: '等待中'
+        });
+      });
+      refreshQueue();
+    }
+
     var dz = $('dropzone');
     dz.addEventListener('dragover', function (e) { e.preventDefault(); dz.classList.add('is-drag'); });
     dz.addEventListener('dragleave', function () { dz.classList.remove('is-drag'); });
     dz.addEventListener('drop', function (e) {
       e.preventDefault();
       dz.classList.remove('is-drag');
-      if (e.dataTransfer.files && e.dataTransfer.files[0]) pickFile(e.dataTransfer.files[0]);
+      addFiles(e.dataTransfer.files);
     });
     $('file-input').addEventListener('change', function (e) {
-      if (e.target.files && e.target.files[0]) pickFile(e.target.files[0]);
+      addFiles(e.target.files);
+      e.target.value = '';
     });
-    $('btn-upload').onclick = function () {
-      try {
-        var customerId = $('up-customer').value;
-        if (!customerId) throw new Error('請選擇客戶');
-        if (!selectedFile) throw new Error('請選擇檔案');
-        DriveDocsStore.uploadDocument({
-          customerId: customerId,
-          category: $('up-category').value,
-          fileName: selectedFile.name,
-          mimeType: selectedFile.type || 'application/octet-stream',
-          size: selectedFile.size
-        });
-        toast('Demo：已記錄文件（非正式 Drive 上傳）');
-        state.uploadPreset = null;
-        setPage('detail', { customerId: customerId });
-      } catch (err) { toast(err.message || err, true); }
+
+    $('btn-start-upload').onclick = function () {
+      var customerId = $('up-customer').value;
+      var category = $('up-category').value;
+      if (!customerId) { toast('請選擇客戶資料夾', true); return; }
+      if (!state.uploadQueue.length) { toast('請先加入檔案', true); return; }
+
+      var btn = $('btn-start-upload');
+      btn.disabled = true;
+      var i = 0;
+
+      function next() {
+        if (i >= state.uploadQueue.length) {
+          btn.disabled = false;
+          toast('上傳完成（Demo）');
+          state.uploadPreset = null;
+          setTimeout(function () {
+            state.uploadQueue = [];
+            setPage('detail', { customerId: customerId, category: category });
+          }, 500);
+          return;
+        }
+        var item = state.uploadQueue[i];
+        item.status = '上傳中';
+        item.progress = 30;
+        refreshQueue();
+
+        setTimeout(function () {
+          try {
+            item.progress = 70;
+            refreshQueue();
+            DriveDocsStore.uploadDocument({
+              customerId: customerId,
+              category: category,
+              fileName: item.name,
+              mimeType: item.mimeType,
+              size: item.size
+            });
+            item.progress = 100;
+            item.status = '完成';
+            refreshQueue();
+            i += 1;
+            setTimeout(next, 220);
+          } catch (err) {
+            item.status = '失敗';
+            refreshQueue();
+            toast(err.message || err, true);
+            btn.disabled = false;
+          }
+        }, 280);
+      }
+      next();
     };
+
+    refreshQueue();
   }
 
   function renderReports(content) {
     var r = DriveDocsStore.getReports();
     content.innerHTML =
-      '<section class="hero-strip" style="margin-bottom:1rem">' +
-        '<p class="hero-strip__brand" style="font-size:2rem">每日整理</p>' +
-        '<p class="hero-strip__lead">追蹤今日新增、整理完成與文件缺漏。</p></section>' +
       '<div class="stat-grid">' +
-        stat('今日新增', r.today.newCustomers) +
-        stat('整理完成', r.today.organized) +
-        stat('缺少文件', r.today.missingDocs) +
-        stat('最近更新', r.today.updates) +
-        stat('總完成率', r.completionRate + '%') +
+        kpi('今日新增', r.today.newCustomers, '客戶', '＋') +
+        kpi('整理完成', r.today.organized, '上傳', '↑') +
+        kpi('缺少文件', r.today.missingDocs, '缺件客戶', '!') +
+        kpi('總完成率', r.completionRate + '%', '平均', '✔') +
       '</div>' +
-      '<div class="split-2"><section class="panel"><h2 class="panel__title">文件缺漏</h2>' +
-        (r.missing.length
-          ? '<ul class="missing-list">' + r.missing.map(function (m) {
-              return '<li class="missing-item" data-id="' + escapeHtml(m.customerId) + '" data-name="' + escapeHtml(m.customerName) + '">' +
-                '<div><p class="missing-item__name">' + escapeHtml(m.customerName) + '</p>' +
-                '<p class="missing-item__cats">' + escapeHtml((m.missingCategories || []).join('、')) + '</p></div>' +
-                '<span class="completion__pct">' + m.completion + '%</span></li>';
-            }).join('') + '</ul>'
-          : '<p class="empty">太好了，沒有缺件客戶</p>') +
-      '</section><section class="panel"><h2 class="panel__title">近 14 日紀錄</h2>' +
-        (r.history.length
-          ? '<ul class="activity">' + r.history.map(function (h) {
-              return '<li class="activity__item"><span class="activity__check">·</span><div>' +
-                '<p class="activity__name">' + escapeHtml(h.date) + '</p>' +
-                '<p class="activity__detail">新增 ' + h.newCustomers + ' · 整理 ' + h.organized + ' · 更新 ' + h.updates + '</p></div></li>';
-            }).join('') + '</ul>'
-          : '<p class="empty">尚無歷史資料</p>') +
-      '</section></div>';
-    content.querySelectorAll('.missing-item').forEach(function (el) {
-      el.addEventListener('click', function () {
-        setPage('detail', { customerId: el.getAttribute('data-id'), title: el.getAttribute('data-name') });
-      });
+      '<div class="split-2">' +
+        '<section class="card"><div class="card__hd"><h2 class="card__title">文件缺漏</h2></div><div class="card__bd">' +
+          (r.missing.length
+            ? '<ul class="activity">' + r.missing.map(function (m) {
+                return '<li class="activity__item" data-id="' + escapeHtml(m.customerId) + '" data-name="' + escapeHtml(m.customerName) + '" style="cursor:pointer">' +
+                  '<span class="activity__dot">' + escapeHtml(m.customerName.charAt(0)) + '</span>' +
+                  '<div><p class="activity__name">' + escapeHtml(m.customerName) + '</p>' +
+                  '<p class="activity__detail">' + escapeHtml((m.missingCategories || []).join('、')) + '</p></div>' +
+                  '<span class="activity__time">' + m.completion + '%</span></li>';
+              }).join('') + '</ul>'
+            : '<p class="empty">沒有缺件</p>') +
+        '</div></section>' +
+        '<section class="card"><div class="card__hd"><h2 class="card__title">近 14 日</h2></div><div class="card__bd">' +
+          (r.history.length
+            ? '<ul class="activity">' + r.history.map(function (h) {
+                return '<li class="activity__item"><span class="activity__dot">·</span><div>' +
+                  '<p class="activity__name">' + escapeHtml(h.date) + '</p>' +
+                  '<p class="activity__detail">新增 ' + h.newCustomers + ' · 整理 ' + h.organized + '</p></div></li>';
+              }).join('') + '</ul>'
+            : '<p class="empty">尚無資料</p>') +
+        '</div></section></div>';
+    content.querySelectorAll('[data-id]').forEach(function (el) {
+      el.onclick = function () {
+        setPage('detail', { customerId: el.getAttribute('data-id'), category: null });
+      };
     });
   }
 
   function renderSettings(content) {
     var s = DriveDocsStore.getSettings();
     content.innerHTML =
-      '<div class="split-2"><section class="panel"><h2 class="panel__title">Google Drive（Demo 模擬）</h2>' +
-        '<div class="field"><label>根目錄名稱</label><input id="s-root" value="' + escapeHtml(s.rootFolderName) + '"></div>' +
-        '<div class="field"><label>命名規則</label><input id="s-naming" value="' + escapeHtml(s.namingRule) + '"></div>' +
-        '<div class="field"><label>管理員</label><input id="s-admins" value="' + escapeHtml((s.admins || []).join(', ')) + '"></div>' +
-      '</section><section class="panel"><h2 class="panel__title">資料夾模板 / 文件分類</h2>' +
-        '<div class="cat-editor" id="cat-editor">' +
-          (s.categories || []).map(function (cat) {
-            return '<div class="cat-editor__row"><input value="' + escapeHtml(cat) + '">' +
-              '<button type="button" class="btn btn--ghost btn-rm-cat">移除</button></div>';
-          }).join('') +
-        '</div>' +
-        '<div style="margin-top:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap">' +
-          '<button type="button" class="btn" id="btn-add-cat">新增分類</button>' +
+      '<div class="split-2">' +
+        '<section class="card"><div class="card__hd"><h2 class="card__title">Google Drive（Demo）</h2></div><div class="card__bd">' +
+          '<div class="field"><label>根目錄名稱</label><input id="s-root" value="' + escapeHtml(s.rootFolderName) + '"></div>' +
+          '<div class="field"><label>命名規則</label><input id="s-naming" value="' + escapeHtml(s.namingRule) + '"></div>' +
+          '<div class="field"><label>管理員</label><input id="s-admins" value="' + escapeHtml((s.admins || []).join(', ')) + '"></div>' +
           '<button type="button" class="btn btn--primary" id="btn-save-settings">儲存設定</button>' +
-        '</div></section></div>' +
-      '<section class="panel" style="margin-top:1rem"><h2 class="panel__title">示範資料</h2>' +
-        '<p style="color:var(--ink-soft);margin:0 0 0.85rem">重設瀏覽器內的示範客戶與活動紀錄。</p>' +
-        '<button type="button" class="btn btn--accent" id="btn-seed">重設示範資料</button></section>';
+        '</div></section>' +
+        '<section class="card"><div class="card__hd"><h2 class="card__title">資料夾模板</h2></div><div class="card__bd">' +
+          '<div class="cat-editor" id="cat-editor">' +
+            (s.categories || []).map(function (cat) {
+              return '<div class="cat-editor__row"><input value="' + escapeHtml(cat) + '">' +
+                '<button type="button" class="btn btn--ghost btn-rm-cat">移除</button></div>';
+            }).join('') +
+          '</div>' +
+          '<div style="margin-top:0.75rem;display:flex;gap:0.5rem">' +
+            '<button type="button" class="btn" id="btn-add-cat">新增分類</button>' +
+            '<button type="button" class="btn btn--brand" id="btn-seed">重設示範資料</button>' +
+          '</div></div></section></div>';
 
     $('btn-add-cat').onclick = function () {
       var row = document.createElement('div');
@@ -421,17 +619,15 @@
       btn.onclick = function () { btn.parentElement.remove(); };
     });
     $('btn-save-settings').onclick = function () {
-      try {
-        DriveDocsStore.saveSettings({
-          rootFolderName: $('s-root').value,
-          namingRule: $('s-naming').value,
-          categories: Array.prototype.map.call($('cat-editor').querySelectorAll('input'), function (inp) {
-            return inp.value.trim();
-          }).filter(Boolean),
-          admins: $('s-admins').value.split(/[,，]/).map(function (t) { return t.trim(); }).filter(Boolean)
-        });
-        toast('設定已儲存');
-      } catch (err) { toast(err.message || err, true); }
+      DriveDocsStore.saveSettings({
+        rootFolderName: $('s-root').value,
+        namingRule: $('s-naming').value,
+        categories: Array.prototype.map.call($('cat-editor').querySelectorAll('input'), function (inp) {
+          return inp.value.trim();
+        }).filter(Boolean),
+        admins: $('s-admins').value.split(/[,，]/).map(function (t) { return t.trim(); }).filter(Boolean)
+      });
+      toast('設定已儲存');
     };
     $('btn-seed').onclick = function () {
       DriveDocsStore.resetDemo();
@@ -443,33 +639,37 @@
   function renderSearch(content) {
     var res = DriveDocsStore.search(state.searchQuery || '');
     content.innerHTML =
-      '<div class="search-results"><section class="panel"><h2 class="panel__title">客戶（' + res.customers.length + '）</h2>' +
-        (res.customers.length ? '<div class="explorer">' + res.customers.map(folderRow).join('') + '</div>' : '<p class="empty">沒有符合的客戶</p>') +
-      '</section><section class="panel"><h2 class="panel__title">文件（' + res.files.length + '）</h2>' +
-        (res.files.length
-          ? '<ul class="file-list">' + res.files.map(function (x) {
-              return '<li class="file-row"><div><p class="file-row__name">' + escapeHtml(x.file.name) + '</p>' +
-                '<p class="file-row__meta">' + escapeHtml(x.customerName) + ' · ' + escapeHtml(x.file.category) + '</p></div>' +
-                '<div class="file-actions"><button type="button" class="btn btn-open-cust" data-id="' + escapeHtml(x.customerId) + '" data-name="' + escapeHtml(x.customerName) + '">開啟客戶</button></div></li>';
-            }).join('') + '</ul>'
-          : '<p class="empty">沒有符合的文件</p>') +
-      '</section></div>';
-    content.querySelectorAll('.folder-row, .btn-open-cust').forEach(function (el) {
-      el.addEventListener('click', function () {
-        setPage('detail', { customerId: el.getAttribute('data-id'), title: el.getAttribute('data-name') });
-      });
+      '<div class="split-2">' +
+        '<section class="card"><div class="card__hd"><h2 class="card__title">客戶（' + res.customers.length + '）</h2></div>' +
+        '<div class="card__bd"><div class="folder-strip">' +
+          (res.customers.length ? res.customers.map(folderTile).join('') : '<p class="empty">沒有符合客戶</p>') +
+        '</div></div></section>' +
+        '<section class="card"><div class="card__hd"><h2 class="card__title">文件（' + res.files.length + '）</h2></div>' +
+        '<div class="card__bd" style="padding:0;overflow:auto">' +
+          (res.files.length
+            ? '<table class="file-table"><thead><tr><th>檔名</th><th>客戶</th><th>分類</th></tr></thead><tbody>' +
+              res.files.map(function (x) {
+                return '<tr style="cursor:pointer" data-id="' + escapeHtml(x.customerId) + '"><td>' + escapeHtml(x.file.name) + '</td>' +
+                  '<td>' + escapeHtml(x.customerName) + '</td><td>' + escapeHtml(x.file.category) + '</td></tr>';
+              }).join('') + '</tbody></table>'
+            : '<p class="empty">沒有符合文件</p>') +
+        '</div></section></div>';
+    content.querySelectorAll('.folder-tile, tr[data-id]').forEach(function (el) {
+      el.onclick = function () {
+        setPage('detail', { customerId: el.getAttribute('data-id'), category: null });
+      };
     });
   }
 
   function showCreateCustomerModal() {
     openModal(
-      '<h2>新增客戶</h2>' +
+      '<h2>新建客戶資料夾</h2>' +
       '<div class="field"><label>姓名</label><input id="m-name" placeholder="王大明"></div>' +
       '<div class="field"><label>電話</label><input id="m-phone" placeholder="0912-123-456"></div>' +
-      '<div class="field"><label>Email</label><input id="m-email" placeholder="name@example.com"></div>' +
+      '<div class="field"><label>Email</label><input id="m-email"></div>' +
       '<div class="field"><label>標籤</label><input id="m-tags" placeholder="保險, VIP"></div>' +
       '<div class="modal__actions">' +
-        '<button type="button" class="btn btn--ghost" id="m-cancel">取消</button>' +
+        '<button type="button" class="btn" id="m-cancel">取消</button>' +
         '<button type="button" class="btn btn--primary" id="m-ok">建立</button></div>'
     );
     $('m-cancel').onclick = closeModal;
@@ -483,36 +683,33 @@
         });
         closeModal();
         toast('已建立「' + c.name + '」');
-        setPage('detail', { customerId: c.id, title: c.name });
+        setPage('detail', { customerId: c.id, category: null });
       } catch (err) { toast(err.message || err, true); }
     };
   }
 
   function boot() {
-    document.querySelectorAll('.nav__item').forEach(function (btn) {
-      btn.addEventListener('click', function () { setPage(btn.getAttribute('data-page')); });
+    document.querySelectorAll('.sider__item').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        setPage(btn.getAttribute('data-page'));
+      });
     });
     $('sidebar-toggle').addEventListener('click', function () {
-      state.sidebarOpen = !state.sidebarOpen;
-      $('sidebar').classList.toggle('is-open', state.sidebarOpen);
+      $('sidebar').classList.toggle('is-open');
     });
-    var search = $('global-search');
-    search.addEventListener('input', function () {
+    $('global-search').addEventListener('input', function () {
       clearTimeout(state.searchTimer);
-      var q = search.value.trim();
+      var q = $('global-search').value.trim();
       state.searchTimer = setTimeout(function () {
         if (!q) {
-          if (state.page === 'search') setPage('customers');
+          if (state.page === 'search') setPage('dashboard');
           return;
         }
         state.searchQuery = q;
-        setPage('search', { title: '搜尋：' + q });
-      }, 280);
+        setPage('search');
+      }, 250);
     });
-
     DriveDocsStore.listCustomers('zhuyin');
-    $('boot').classList.add('hidden');
-    $('shell').classList.remove('hidden');
     setPage('dashboard');
   }
 

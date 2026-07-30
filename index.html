@@ -11,53 +11,54 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <div id="app" class="app">
-    <div id="boot" class="boot">
-      <div class="boot__mark" aria-hidden="true"></div>
-      <p class="boot__brand">DriveDocs</p>
-      <p class="boot__hint">載入中…</p>
-    </div>
+  <div id="app" class="layout">
+    <aside class="sider" id="sidebar">
+      <div class="sider__brand">
+        <span class="sider__mark" aria-hidden="true"></span>
+        <div>
+          <div class="sider__name">DriveDocs</div>
+          <div class="sider__sub">Workplace</div>
+        </div>
+      </div>
+      <nav class="sider__nav" aria-label="主選單">
+        <button type="button" class="sider__item is-active" data-page="dashboard"><span class="sider__ico">◈</span>Dashboard</button>
+        <button type="button" class="sider__item" data-page="customers"><span class="sider__ico">☰</span>客戶資料夾</button>
+        <button type="button" class="sider__item" data-page="upload"><span class="sider__ico">↑</span>文件上傳</button>
+        <button type="button" class="sider__item" data-page="reports"><span class="sider__ico">▣</span>報表</button>
+        <button type="button" class="sider__item" data-page="settings"><span class="sider__ico">⚙</span>設定</button>
+      </nav>
+      <div class="sider__storage">
+        <div class="sider__storage-label">Demo 儲存空間</div>
+        <div class="sider__storage-bar"><span id="storage-fill" style="width:16%"></span></div>
+        <div class="sider__storage-meta" id="storage-meta">本機 Demo · localStorage</div>
+      </div>
+    </aside>
 
-    <div id="shell" class="shell hidden">
-      <aside class="sidebar" id="sidebar">
-        <div class="sidebar__brand">
-          <span class="sidebar__logo" aria-hidden="true"></span>
-          <div>
-            <div class="sidebar__name">DriveDocs</div>
-            <div class="sidebar__tag">GitHub Pages Demo</div>
+    <div class="stage">
+      <header class="header">
+        <button type="button" class="header__menu" id="sidebar-toggle" aria-label="選單">☰</button>
+        <div class="header__search">
+          <input type="search" id="global-search" placeholder="搜尋客戶、電話、文件…" autocomplete="off">
+        </div>
+        <div class="header__right">
+          <span class="header__chip">GitHub Pages Demo</span>
+          <div class="header__user">
+            <span class="header__avatar">S</span>
+            <span class="header__uname">示範使用者</span>
           </div>
         </div>
-        <nav class="nav" aria-label="主選單">
-          <button type="button" class="nav__item is-active" data-page="dashboard">Dashboard</button>
-          <button type="button" class="nav__item" data-page="customers">Customers</button>
-          <button type="button" class="nav__item" data-page="upload">Upload</button>
-          <button type="button" class="nav__item" data-page="reports">Reports</button>
-          <button type="button" class="nav__item" data-page="settings">Settings</button>
-        </nav>
-        <div class="sidebar__foot">
-          <div class="sidebar__search">
-            <input type="search" id="global-search" placeholder="搜尋客戶、電話、文件…" autocomplete="off">
-          </div>
-          <p class="sidebar__email">瀏覽器 Demo · 資料存在本機</p>
-        </div>
-      </aside>
+      </header>
 
-      <main class="main">
-        <header class="topbar">
-          <button type="button" class="icon-btn sidebar-toggle" id="sidebar-toggle" aria-label="選單">☰</button>
-          <h1 class="topbar__title" id="page-title">Dashboard</h1>
-          <div class="topbar__actions" id="topbar-actions"></div>
-        </header>
-        <div class="banner" role="note">
-          這是 GitHub Pages 靜態 Demo。文件不會上傳到真實 Google Drive；正式版請見 <code>apps-script/</code>。
-        </div>
-        <div class="content" id="content"></div>
-      </main>
+      <div class="notice">
+        靜態 Demo：介面仿雲端硬碟／管理後台。正式版接 Google Drive 見 <code>apps-script/</code>。
+      </div>
+
+      <main class="main" id="content"></main>
     </div>
-
-    <div id="toasts" class="toasts" aria-live="polite"></div>
-    <div id="modal-root"></div>
   </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="modal-root"></div>
 
   <script src="js/zhuyin.js"></script>
   <script src="js/store.js"></script>
