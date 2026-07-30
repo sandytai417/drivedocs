@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="DriveDocs — Organize Client Documents Directly in Google Drive.">
+  <title>DriveDocs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="app" class="app">
+    <div id="boot" class="boot">
+      <div class="boot__mark" aria-hidden="true"></div>
+      <p class="boot__brand">DriveDocs</p>
+      <p class="boot__hint">載入中…</p>
+    </div>
+
+    <div id="shell" class="shell hidden">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar__brand">
+          <span class="sidebar__logo" aria-hidden="true"></span>
+          <div>
+            <div class="sidebar__name">DriveDocs</div>
+            <div class="sidebar__tag">GitHub Pages Demo</div>
+          </div>
+        </div>
+        <nav class="nav" aria-label="主選單">
+          <button type="button" class="nav__item is-active" data-page="dashboard">Dashboard</button>
+          <button type="button" class="nav__item" data-page="customers">Customers</button>
+          <button type="button" class="nav__item" data-page="upload">Upload</button>
+          <button type="button" class="nav__item" data-page="reports">Reports</button>
+          <button type="button" class="nav__item" data-page="settings">Settings</button>
+        </nav>
+        <div class="sidebar__foot">
+          <div class="sidebar__search">
+            <input type="search" id="global-search" placeholder="搜尋客戶、電話、文件…" autocomplete="off">
+          </div>
+          <p class="sidebar__email">瀏覽器 Demo · 資料存在本機</p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <button type="button" class="icon-btn sidebar-toggle" id="sidebar-toggle" aria-label="選單">☰</button>
+          <h1 class="topbar__title" id="page-title">Dashboard</h1>
+          <div class="topbar__actions" id="topbar-actions"></div>
+        </header>
+        <div class="banner" role="note">
+          這是 GitHub Pages 靜態 Demo。文件不會上傳到真實 Google Drive；正式版請見 <code>apps-script/</code>。
+        </div>
+        <div class="content" id="content"></div>
+      </main>
+    </div>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+    <div id="modal-root"></div>
+  </div>
+
+  <script src="js/zhuyin.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

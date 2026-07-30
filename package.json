@@ -1,15 +1,5 @@
 {
-  "name": "drivedocs",
-  "version": "1.0.0",
-  "description": "Google Drive Native Client Document Management System",
+  "name": "drivedocs-pages",
   "private": true,
-  "scripts": {
-    "push": "clasp push",
-    "open": "clasp open",
-    "deploy": "clasp deploy",
-    "login": "clasp login"
-  },
-  "devDependencies": {
-    "@google/clasp": "^2.4.2"
-  }
+  "description": "DriveDocs GitHub Pages demo"
 }
