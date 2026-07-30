@@ -971,15 +971,15 @@
     content.innerHTML =
       '<section class="greeting"><h1>' + (state.page === 'analytics' ? '報表分析' : '每月回報') + '</h1>' +
       '<p>本月 ' + escapeHtml(r.month) + ' · 聚焦進度與活動</p></section>' +
-      '<div class="overview" style="grid-template-columns:repeat(4,minmax(0,1fr))">' +
+      '<div class="overview overview--4">' +
         statCard('＋', r.monthStats.newCustomers, '本月新增客戶') +
         statCard('↑', r.monthStats.organized, '本月整理') +
         statCard('%', r.completionRate + '%', '完成率') +
-        statCard('📄', d.totalFiles, '文件總計') +
+        statCard('▣', d.totalFiles, '文件總計') +
       '</div>' +
-      '<div class="overview" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:0">' +
-        statCard('🎙', r.lecturesThisWeek, '本週講座') +
-        statCard('📅', r.activitiesThisMonth, '本月活動') +
+      '<div class="overview overview--2">' +
+        statCard('·', r.lecturesThisWeek, '本週講座') +
+        statCard('·', r.activitiesThisMonth, '本月活動') +
       '</div>' +
       '<section class="card"><div class="card__hd"><div><h2 class="card__title">最近更新</h2></div></div>' +
       '<div class="card__bd">' + renderActivity(d.activity) + '</div></section>' +
