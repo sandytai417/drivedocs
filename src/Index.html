@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DriveDocs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <?!= include('Stylesheet'); ?>
+</head>
+<body>
+  <div id="app" class="app">
+    <!-- Boot -->
+    <div id="boot" class="boot">
+      <div class="boot__mark" aria-hidden="true"></div>
+      <p class="boot__brand">DriveDocs</p>
+      <p class="boot__hint">載入中…</p>
+    </div>
+
+    <!-- Setup gate -->
+    <div id="setup" class="setup hidden">
+      <div class="setup__panel">
+        <p class="setup__brand">DriveDocs</p>
+        <h1 class="setup__title">在 Google Drive 上整理客戶文件</h1>
+        <p class="setup__lead">初始化後會建立「客戶資料」根目錄與 Sheets 索引。文件只存在 Drive，網站不另存副本。</p>
+        <div class="setup__actions">
+          <button type="button" class="btn btn--primary" id="btn-init">開始初始化</button>
+        </div>
+        <p class="setup__user" id="setup-user"></p>
+      </div>
+    </div>
+
+    <!-- Main shell -->
+    <div id="shell" class="shell hidden">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar__brand">
+          <span class="sidebar__logo" aria-hidden="true"></span>
+          <div>
+            <div class="sidebar__name">DriveDocs</div>
+            <div class="sidebar__tag">Drive-native</div>
+          </div>
+        </div>
+        <nav class="nav" aria-label="主選單">
+          <button type="button" class="nav__item is-active" data-page="dashboard">Dashboard</button>
+          <button type="button" class="nav__item" data-page="customers">Customers</button>
+          <button type="button" class="nav__item" data-page="upload">Upload</button>
+          <button type="button" class="nav__item" data-page="reports">Reports</button>
+          <button type="button" class="nav__item" data-page="settings">Settings</button>
+        </nav>
+        <div class="sidebar__foot">
+          <div class="sidebar__search">
+            <input type="search" id="global-search" placeholder="搜尋客戶、電話、文件…" autocomplete="off">
+          </div>
+          <p class="sidebar__email" id="user-email"></p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <button type="button" class="icon-btn sidebar-toggle" id="sidebar-toggle" aria-label="選單">☰</button>
+          <h1 class="topbar__title" id="page-title">Dashboard</h1>
+          <div class="topbar__actions" id="topbar-actions"></div>
+        </header>
+        <div class="content" id="content"></div>
+      </main>
+    </div>
+
+    <!-- Toast -->
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+
+    <!-- Modal root -->
+    <div id="modal-root"></div>
+  </div>
+
+  <?!= include('App'); ?>
+</body>
+</html>
