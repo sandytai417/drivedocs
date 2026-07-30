@@ -237,6 +237,17 @@ a { color: var(--primary); text-decoration: none; }
 }
 .user__name { font-size: 0.88rem; font-weight: 500; padding-right: 0.25rem; }
 
+.privacy-chip {
+  font-size: 0.78rem;
+  font-weight: 550;
+  color: var(--ink-soft);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.4rem 0.75rem;
+  white-space: nowrap;
+}
+
 .demo-banner {
   margin: 0.85rem 1.5rem 0;
   padding: 0.65rem 0.9rem;

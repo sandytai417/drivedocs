@@ -45,8 +45,7 @@
       settings: {
         rootFolderName: '客戶資料',
         namingRule: '{name}',
-        categories: DEFAULT_CATEGORIES.slice(),
-        admins: ['demo@local']
+        categories: DEFAULT_CATEGORIES.slice()
       },
       customers: [],
       files: {},
@@ -304,7 +303,6 @@
         s.settings.categories = data.categories.map(function (c) { return String(c).trim(); }).filter(Boolean);
         s.customers.forEach(function (c) { refreshCustomer(s, c.id); });
       }
-      if (data.admins) s.settings.admins = data.admins;
       save(s);
       return s.settings;
     },

@@ -53,6 +53,10 @@
     return '晚安';
   }
 
+  function privacyBlurb() {
+    return '專為一人使用的私人雲端硬碟介面，不需設定個人資料介紹。';
+  }
+
   function animateBars(root) {
     requestAnimationFrame(function () {
       (root || document).querySelectorAll('[data-width]').forEach(function (el) {
@@ -170,8 +174,8 @@
 
     content.innerHTML =
       '<section class="greeting">' +
-        '<h1>' + greetingText() + '，王小明！</h1>' +
-        '<p>以下是您今天的工作總覽</p>' +
+        '<h1>' + greetingText() + '</h1>' +
+        '<p>' + privacyBlurb() + '</p>' +
       '</section>' +
 
       '<div class="overview">' +
@@ -945,23 +949,23 @@
   function renderSettings(content) {
     var s = DriveDocsStore.getSettings();
     content.innerHTML =
-      '<section class="greeting"><h1>設定</h1><p>資料夾模板與命名規則</p></section>' +
+      '<section class="greeting"><h1>設定</h1><p>僅調整資料夾模板與 Drive 根目錄命名 · 無個人簡介設定</p></section>' +
       '<div class="stack">' +
         '<section class="card"><div class="card__bd">' +
           '<div class="field"><label>根目錄名稱</label><input id="s-root" value="' + escapeHtml(s.rootFolderName) + '"></div>' +
           '<div class="field"><label>命名規則</label><input id="s-naming" value="' + escapeHtml(s.namingRule) + '"></div>' +
           '<button type="button" class="btn btn--primary" id="btn-save-settings">儲存</button>' +
         '</div></section>' +
-        '<section class="card"><div class="card__hd"><div><h2 class="card__title">資料夾模板</h2></div></div><div class="card__bd">' +
+        '<section class="card"><div class="card__hd"><div><h2 class="card__title">資料夾模板</h2><p class="card__sub">新客戶預設分類</p></div></div><div class="card__bd">' +
           '<div id="cat-editor">' + s.categories.map(function (cat) {
             return '<div class="field" style="display:grid;grid-template-columns:1fr auto;gap:0.5rem;align-items:end">' +
               '<div><label>分類</label><input value="' + escapeHtml(cat) + '"></div>' +
               '<button type="button" class="btn btn--ghost btn-rm">移除</button></div>';
           }).join('') + '</div>' +
-          '<div style="display:flex;gap:0.5rem;margin-top:0.5rem">' +
+          '<div style="display:flex;gap:0.5rem;margin-top:0.5rem;flex-wrap:wrap">' +
             '<button type="button" class="btn" id="btn-add-cat">新增分類</button>' +
             '<button type="button" class="btn btn--primary" id="btn-save-cats">儲存模板</button>' +
-            '<button type="button" class="btn" id="btn-reset">重設示範資料</button>' +
+            '<button type="button" class="btn" id="btn-reset">清除本機資料</button>' +
           '</div></div></section></div>';
 
     $('btn-add-cat').onclick = function () {
@@ -988,7 +992,7 @@
     };
     $('btn-reset').onclick = function () {
       DriveDocsStore.resetDemo();
-      toast('已重設示範資料');
+      toast('已清除並重建本機資料');
       setPage('dashboard');
     };
   }
