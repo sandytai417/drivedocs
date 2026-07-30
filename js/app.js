@@ -972,7 +972,7 @@
       '<section class="greeting"><h1>' + (state.page === 'analytics' ? '報表分析' : '每月回報') + '</h1>' +
       '<p>本月 ' + escapeHtml(r.month) + ' · 聚焦進度與活動</p></section>' +
       '<div class="overview overview--4">' +
-        statCard('＋', r.monthStats.newCustomers, '本月新增客戶') +
+        statCard('＋', r.monthStats.newCustomers, '新增客戶') +
         statCard('↑', r.monthStats.organized, '本月整理') +
         statCard('%', r.completionRate + '%', '完成率') +
         statCard('▣', d.totalFiles, '文件總計') +
