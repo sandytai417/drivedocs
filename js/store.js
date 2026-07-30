@@ -5,7 +5,7 @@
 (function (global) {
   'use strict';
 
-  var KEY = 'drivedocs.v3';
+  var KEY = 'drivedocs.v4';
   var DEFAULT_CATEGORIES = [
     '01 基本資料',
     '02 保單',
@@ -150,6 +150,8 @@
       c.status = deriveStatus(c.completion, c.status);
     }
     c.fileCount = countFiles(state, customerId);
+    // 資料筆數（文件）大於 1 → 續保
+    c.isRenewal = c.fileCount > 1;
     c.updatedAt = c.updatedAt || nowIso();
   }
 
@@ -187,16 +189,16 @@
 
   function seed(state) {
     var samples = [
-      { name: '白雅婷', phone: '0912-345-678', email: 'pai@example.com', birthday: '1992-03-18', tags: ['保險'] },
-      { name: '包志明', phone: '0922-111-222', email: 'bao@example.com', birthday: '1988-11-02', tags: ['房仲'] },
-      { name: '柏建豪', phone: '0933-888-999', email: 'bo@example.com', birthday: '1990-07-21', tags: ['財務'] },
-      { name: '潘怡君', phone: '0918-555-666', email: 'pan@example.com', birthday: '1995-01-09', tags: ['保險'] },
-      { name: '馬志豪', phone: '0955-123-456', email: 'ma@example.com', birthday: '1985-05-30', tags: ['會計'] },
-      { name: '毛子恩', phone: '0966-777-888', email: 'mao@example.com', birthday: '1998-09-12', tags: ['法律'] },
-      { name: '王大明', phone: '0912-123-456', email: 'wang@example.com', birthday: '1980-08-08', tags: ['保險', 'VIP'] },
-      { name: '陳美玲', phone: '0977-222-333', email: 'chen@example.com', birthday: '1991-12-25', tags: ['代書'] },
-      { name: '林俊傑', phone: '0988-444-555', email: 'lin@example.com', birthday: '1987-04-14', tags: ['保險'] },
-      { name: '黃詩涵', phone: '0911-666-777', email: 'huang@example.com', birthday: '1993-06-06', tags: ['財務'] }
+      { name: '白雅婷', phone: '0912-345-678', email: 'pai@example.com', birthday: '1992-03-18', gender: '女', idNumber: 'A223456789', address: '台北市大安區復興南路一段100號', tags: ['保險'] },
+      { name: '包志明', phone: '0922-111-222', email: 'bao@example.com', birthday: '1988-11-02', gender: '男', idNumber: 'B123456789', address: '新北市板橋區文化路二段88號', tags: ['房仲'] },
+      { name: '柏建豪', phone: '0933-888-999', email: 'bo@example.com', birthday: '1990-07-21', gender: '男', idNumber: 'C123456780', address: '台中市西屯區台灣大道三段200號', tags: ['財務'] },
+      { name: '潘怡君', phone: '0918-555-666', email: 'pan@example.com', birthday: '1995-01-09', gender: '女', idNumber: 'D223456781', address: '高雄市左營區博愛二路66號', tags: ['保險'] },
+      { name: '馬志豪', phone: '0955-123-456', email: 'ma@example.com', birthday: '1985-05-30', gender: '男', idNumber: 'E123456782', address: '桃園市中壢區中正路50號', tags: ['會計'] },
+      { name: '毛子恩', phone: '0966-777-888', email: 'mao@example.com', birthday: '1998-09-12', gender: '男', idNumber: 'F123456783', address: '台南市東區中華東路一段12號', tags: ['法律'] },
+      { name: '王大明', phone: '0912-123-456', email: 'wang@example.com', birthday: '1980-08-08', gender: '男', idNumber: 'A123456789', address: '台北市信義區松仁路100號', tags: ['保險', 'VIP'] },
+      { name: '陳美玲', phone: '0977-222-333', email: 'chen@example.com', birthday: '1991-12-25', gender: '女', idNumber: 'H223456784', address: '新竹市東區光復路二段30號', tags: ['代書'] },
+      { name: '林俊傑', phone: '0988-444-555', email: 'lin@example.com', birthday: '1987-04-14', gender: '男', idNumber: 'A123456790', address: '台北市中山區南京東路三段66號', tags: ['保險'] },
+      { name: '黃詩涵', phone: '0911-666-777', email: 'huang@example.com', birthday: '1993-06-06', gender: '女', idNumber: 'A223456791', address: '台中市南屯區公益路二段8號', tags: ['財務'] }
     ];
 
     samples.forEach(function (s, idx) {
@@ -225,6 +227,9 @@
         phone: s.phone,
         email: s.email,
         birthday: s.birthday || '',
+        gender: s.gender || '',
+        idNumber: s.idNumber || '',
+        address: s.address || '',
         tags: s.tags,
         notes: '',
         createdAt: now,
@@ -361,6 +366,9 @@
         phone: data.phone || '',
         email: data.email || '',
         birthday: data.birthday || '',
+        gender: data.gender || '',
+        idNumber: data.idNumber || '',
+        address: data.address || '',
         tags: data.tags || [],
         notes: data.notes || '',
         createdAt: now,
@@ -369,6 +377,7 @@
         completion: 0,
         status: 'not_started',
         fileCount: 0,
+        isRenewal: false,
         zhuyin: DriveDocsZhuyin.getZhuyinInitial(name)
       };
       s.customers.push(row);
@@ -394,6 +403,9 @@
       if (data.phone !== undefined) c.phone = data.phone;
       if (data.email !== undefined) c.email = data.email;
       if (data.birthday !== undefined) c.birthday = data.birthday;
+      if (data.gender !== undefined) c.gender = data.gender;
+      if (data.idNumber !== undefined) c.idNumber = data.idNumber;
+      if (data.address !== undefined) c.address = data.address;
       if (data.notes !== undefined) c.notes = data.notes;
       if (data.tags !== undefined) c.tags = data.tags;
       if (data.status !== undefined) c.status = data.status;
@@ -474,7 +486,11 @@
       var matchedFiles = [];
       s.customers.forEach(function (c) {
         refreshCustomer(s, c.id);
-        var hay = [c.name, c.phone, c.email, c.notes, c.zhuyin, (c.tags || []).join(' ')].join(' ').toLowerCase();
+        var hay = [
+          c.name, c.phone, c.email, c.notes, c.zhuyin,
+          c.birthday, c.address, c.idNumber, c.gender,
+          (c.tags || []).join(' ')
+        ].join(' ').toLowerCase();
         var hit = hay.indexOf(q) !== -1;
         var fileHits = [];
         var byCat = s.files[c.id] || {};

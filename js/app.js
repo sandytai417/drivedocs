@@ -227,7 +227,8 @@
     return customers.filter(function (c) {
       if (state.zhuyinFilter !== 'all' && c.zhuyin !== state.zhuyinFilter) return false;
       if (!q) return true;
-      return (c.name + ' ' + c.phone).toLowerCase().indexOf(q) >= 0;
+      var hay = [c.name, c.phone, c.email, c.birthday, c.address, c.idNumber, c.gender].join(' ').toLowerCase();
+      return hay.indexOf(q) >= 0;
     });
   }
 
@@ -247,30 +248,35 @@
             }).join('') +
           '</div>' +
           '<div class="toolbar__right">' +
-            '<input class="mini-search" id="list-search" placeholder="Search" value="' + escapeHtml(state.listQuery) + '">' +
+            '<input class="mini-search" id="list-search" placeholder="姓名／地址／生日／身分證" value="' + escapeHtml(state.listQuery) + '">' +
             '<button type="button" class="btn btn--primary" id="btn-add-customer">新增／上傳</button>' +
           '</div>' +
         '</div>' +
         '<div class="table-wrap"><table class="table"><thead><tr>' +
-          '<th>姓名</th><th>電話</th><th>生日</th><th>完成率</th><th>文件數量</th><th>最後更新</th><th></th>' +
+          '<th>姓名</th><th>電話</th><th>性別</th><th>生日</th><th>完成率</th><th>文件</th><th>狀態</th><th>最後更新</th><th></th>' +
         '</tr></thead><tbody>' +
-        (customers.length ? customers.map(customerRow).join('') : '<tr><td colspan="7"><p class="empty">沒有符合的客戶</p></td></tr>') +
+        (customers.length ? customers.map(customerRow).join('') : '<tr><td colspan="9"><p class="empty">沒有符合的客戶</p></td></tr>') +
         '</tbody></table></div>' +
       '</div></section>';
   }
 
   function customerRow(c) {
     var done = c.completion >= 100;
+    var statusBadge = c.isRenewal || c.fileCount > 1
+      ? '<span class="badge badge--renewal">續保</span>'
+      : '<span class="badge badge--new">新件</span>';
     return '<tr data-id="' + escapeHtml(c.id) + '">' +
       '<td><div class="cell-name">' + escapeHtml(c.name) +
       '<span style="color:var(--muted);font-weight:500;font-size:0.75rem;margin-left:0.35rem">' +
       escapeHtml(c.zhuyin || '') + '/' + escapeHtml(DriveDocsZhuyin.getGivenNameZhuyin(c.name)) +
       '</span></div></td>' +
       '<td>' + escapeHtml(c.phone || '—') + '</td>' +
+      '<td>' + escapeHtml(c.gender || '—') + '</td>' +
       '<td>' + escapeHtml(c.birthday || '—') + '</td>' +
       '<td><div class="progress"><div class="progress__bar"><div class="progress__fill' + (done ? ' is-done' : '') + '" data-width="' + c.completion + '"></div></div>' +
       '<span class="progress__pct">' + c.completion + '%</span></div></td>' +
       '<td>' + (c.fileCount || 0) + '</td>' +
+      '<td>' + statusBadge + '</td>' +
       '<td>' + escapeHtml(formatDate(c.updatedAt)) + '</td>' +
       '<td><button type="button" class="more-btn" data-more="' + escapeHtml(c.id) + '">⋯</button></td>' +
       '</tr>';
@@ -389,10 +395,24 @@
               '<div class="field"><label>Email</label><input id="n-email" placeholder="name@example.com" value="' + escapeHtml(selected ? (selected.email || '') : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
               '<div class="field"><label>生日</label><input id="n-birthday" type="date" value="' + escapeHtml(selected ? (selected.birthday || '') : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
             '</div>' +
+            '<div class="field-row">' +
+              '<div class="field"><label>性別</label><select id="n-gender"' + (state.uploadMode !== 'new' && selected ? ' disabled' : '') + '>' +
+                '<option value="">請選擇</option>' +
+                '<option value="男"' + (selected && selected.gender === '男' ? ' selected' : '') + '>男</option>' +
+                '<option value="女"' + (selected && selected.gender === '女' ? ' selected' : '') + '>女</option>' +
+                '<option value="其他"' + (selected && selected.gender === '其他' ? ' selected' : '') + '>其他</option>' +
+              '</select></div>' +
+              '<div class="field"><label>身分證號</label><input id="n-id" placeholder="A123456789" value="' + escapeHtml(selected ? (selected.idNumber || '') : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
+            '</div>' +
+            '<div class="field"><label>地址</label><input id="n-address" placeholder="縣市／區／路街門牌" value="' + escapeHtml(selected ? (selected.address || '') : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
             (state.uploadMode === 'new'
               ? '<button type="button" class="btn btn--primary" id="btn-create-select">建立客戶</button>'
               : '') +
-            (selected ? '<div class="upload-hint" style="margin-top:0.85rem">目前客戶：<strong>' + escapeHtml(selected.name) + '</strong>' + (selected.birthday ? ' · 生日 ' + escapeHtml(selected.birthday) : '') + '</div>' : '') +
+            (selected ? '<div class="upload-hint" style="margin-top:0.85rem">目前客戶：<strong>' + escapeHtml(selected.name) + '</strong>' +
+              (selected.isRenewal || selected.fileCount > 1 ? ' <span class="badge badge--renewal">續保</span>' : ' <span class="badge badge--new">新件</span>') +
+              (selected.birthday ? ' · 生日 ' + escapeHtml(selected.birthday) : '') +
+              (selected.idNumber ? ' · ' + escapeHtml(selected.idNumber) : '') +
+              '</div>' : '') +
           '</div>' +
         '</section>' +
 
@@ -487,7 +507,10 @@
             name: $('n-name').value.trim(),
             phone: $('n-phone').value.trim(),
             email: $('n-email').value.trim(),
-            birthday: $('n-birthday').value
+            birthday: $('n-birthday').value,
+            gender: $('n-gender').value,
+            idNumber: $('n-id').value.trim(),
+            address: $('n-address').value.trim()
           });
           state.uploadCustomerId = row.id;
           state.uploadMode = 'existing';
@@ -556,7 +579,10 @@
               name: name,
               phone: $('n-phone').value.trim(),
               email: $('n-email').value.trim(),
-              birthday: $('n-birthday').value
+              birthday: $('n-birthday').value,
+              gender: $('n-gender').value,
+              idNumber: $('n-id').value.trim(),
+              address: $('n-address').value.trim()
             });
             state.uploadCustomerId = row.id;
             toast('已建立客戶「' + row.name + '」');
@@ -676,9 +702,14 @@
     content.innerHTML =
       '<div class="detail-head">' +
         '<div class="detail-head__folder"></div>' +
-        '<div><h1>' + escapeHtml(c.name) + '</h1>' +
+        '<div><h1>' + escapeHtml(c.name) + ' ' +
+        (c.isRenewal || c.fileCount > 1 ? '<span class="badge badge--renewal">續保</span>' : '<span class="badge badge--new">新件</span>') +
+        '</h1>' +
         '<p class="detail-head__meta">' + escapeHtml(c.phone || '無電話') +
+        (c.gender ? ' · ' + escapeHtml(c.gender) : '') +
         (c.birthday ? ' · 生日 ' + escapeHtml(c.birthday) : '') +
+        (c.idNumber ? ' · ' + escapeHtml(c.idNumber) : '') +
+        (c.address ? ' · ' + escapeHtml(c.address) : '') +
         (c.email ? ' · ' + escapeHtml(c.email) : '') + '</p></div>' +
         '<div class="detail-head__right">' +
           '<div class="progress" style="min-width:160px"><div class="progress__bar"><div class="progress__fill' + (c.completion >= 100 ? ' is-done' : '') + '" data-width="' + c.completion + '"></div></div>' +
@@ -830,7 +861,18 @@
         '<div class="field"><label>電話</label><input id="c-phone" value="' + escapeHtml(c.phone) + '"></div></div>' +
         '<div class="field-row"><div class="field"><label>Email</label><input id="c-email" value="' + escapeHtml(c.email || '') + '"></div>' +
         '<div class="field"><label>生日</label><input id="c-birthday" type="date" value="' + escapeHtml(c.birthday || '') + '"></div></div>' +
+        '<div class="field-row"><div class="field"><label>性別</label><select id="c-gender">' +
+          '<option value="">請選擇</option>' +
+          '<option value="男"' + (c.gender === '男' ? ' selected' : '') + '>男</option>' +
+          '<option value="女"' + (c.gender === '女' ? ' selected' : '') + '>女</option>' +
+          '<option value="其他"' + (c.gender === '其他' ? ' selected' : '') + '>其他</option>' +
+        '</select></div>' +
+        '<div class="field"><label>身分證號</label><input id="c-id" value="' + escapeHtml(c.idNumber || '') + '" placeholder="A123456789"></div></div>' +
+        '<div class="field"><label>地址</label><input id="c-address" value="' + escapeHtml(c.address || '') + '" placeholder="縣市／區／路街門牌"></div>' +
         '<div class="field"><label>標籤</label><input id="c-tags" value="' + escapeHtml((c.tags || []).join(', ')) + '"></div>' +
+        '<p class="upload-hint">文件筆數：<strong>' + (c.fileCount || 0) + '</strong> · 狀態：' +
+          (c.isRenewal || c.fileCount > 1 ? '<span class="badge badge--renewal">續保</span>（資料大於 1 筆）' : '<span class="badge badge--new">新件</span>') +
+        '</p>' +
         '<button type="button" class="btn btn--primary" id="btn-save-info">儲存</button>' +
       '</div></section>';
     $('btn-save-info').onclick = function () {
@@ -839,6 +881,9 @@
         phone: $('c-phone').value,
         email: $('c-email').value,
         birthday: $('c-birthday').value,
+        gender: $('c-gender').value,
+        idNumber: $('c-id').value.trim(),
+        address: $('c-address').value.trim(),
         tags: $('c-tags').value.split(/[,，]/).map(function (t) { return t.trim(); }).filter(Boolean)
       });
       toast('已儲存');
@@ -975,6 +1020,9 @@
       '<div class="field"><label>電話</label><input id="m-phone" placeholder="0912-123-456"></div>' +
       '<div class="field"><label>Email</label><input id="m-email"></div>' +
       '<div class="field"><label>生日</label><input id="m-birthday" type="date"></div>' +
+      '<div class="field"><label>性別</label><select id="m-gender"><option value="">請選擇</option><option value="男">男</option><option value="女">女</option><option value="其他">其他</option></select></div>' +
+      '<div class="field"><label>身分證號</label><input id="m-id" placeholder="A123456789"></div>' +
+      '<div class="field"><label>地址</label><input id="m-address" placeholder="縣市／區／路街門牌"></div>' +
       '<div class="modal__actions">' +
         '<button type="button" class="btn" id="m-cancel">取消</button>' +
         '<button type="button" class="btn btn--primary" id="m-ok">建立</button></div>'
@@ -986,7 +1034,10 @@
           name: $('m-name').value.trim(),
           phone: $('m-phone').value.trim(),
           email: $('m-email').value.trim(),
-          birthday: $('m-birthday').value
+          birthday: $('m-birthday').value,
+          gender: $('m-gender').value,
+          idNumber: $('m-id').value.trim(),
+          address: $('m-address').value.trim()
         });
         closeModal();
         toast('已建立「' + c.name + '」');

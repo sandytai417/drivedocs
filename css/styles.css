@@ -935,6 +935,27 @@ a { color: var(--primary); text-decoration: none; }
 }
 .toast--error { background: var(--danger); }
 
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+.badge--renewal {
+  background: #EEF2FF;
+  color: #3730A3;
+  border: 1px solid #C7D2FE;
+}
+.badge--new {
+  background: #ECFDF5;
+  color: #047857;
+  border: 1px solid #A7F3D0;
+}
+
 @keyframes fade {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
