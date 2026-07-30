@@ -3,64 +3,51 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="DriveDocs — Organize Client Documents Directly in Google Drive.">
+  <meta name="description" content="DriveDocs — private single-user Drive interface.">
   <title>DriveDocs</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500&family=Noto+Serif+TC:wght@400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+  <div class="announce" role="status">
+    <span>PRIVATE DRIVE · SINGLE USER · LOCAL DEMO</span>
+    <button type="button" class="announce__pill" id="announce-dismiss">DISMISS</button>
+  </div>
+
   <div class="app" id="app">
-    <!-- Left Sidebar -->
     <aside class="sidebar" id="sidebar">
       <div class="sidebar__brand">
-        <div class="logo" aria-hidden="true"></div>
+        <span class="logo-dot" aria-hidden="true"></span>
         <div>
           <div class="sidebar__name">DriveDocs</div>
-          <div class="sidebar__tag">私人雲端硬碟</div>
+          <div class="sidebar__tag">PRIVATE CLOUD DRIVE</div>
         </div>
       </div>
 
       <nav class="menu" aria-label="主選單">
-        <button type="button" class="menu__item is-active" data-page="dashboard">
-          <span class="menu__ico" aria-hidden="true">⌂</span>首頁總覽
-        </button>
-        <button type="button" class="menu__item" data-page="customers">
-          <span class="menu__ico" aria-hidden="true">☰</span>客戶列表
-        </button>
-        <button type="button" class="menu__item" data-page="upload">
-          <span class="menu__ico" aria-hidden="true">↑</span>新增／上傳
-        </button>
-        <button type="button" class="menu__item" data-page="lectures">
-          <span class="menu__ico" aria-hidden="true">🎙</span>本週講座
-        </button>
-        <button type="button" class="menu__item" data-page="activities">
-          <span class="menu__ico" aria-hidden="true">📅</span>本月活動
-        </button>
-        <button type="button" class="menu__item" data-page="reports">
-          <span class="menu__ico" aria-hidden="true">◎</span>每月回報
-        </button>
-        <button type="button" class="menu__item" data-page="analytics">
-          <span class="menu__ico" aria-hidden="true">▣</span>報表分析
-        </button>
-        <button type="button" class="menu__item" data-page="settings">
-          <span class="menu__ico" aria-hidden="true">⚙</span>設定
-        </button>
+        <button type="button" class="menu__item is-active" data-page="dashboard"><span class="menu__ico">⌂</span>首頁總覽</button>
+        <button type="button" class="menu__item" data-page="customers"><span class="menu__ico">☰</span>客戶列表</button>
+        <button type="button" class="menu__item" data-page="upload"><span class="menu__ico">↑</span>新增／上傳</button>
+        <button type="button" class="menu__item" data-page="lectures"><span class="menu__ico">▸</span>本週講座</button>
+        <button type="button" class="menu__item" data-page="activities"><span class="menu__ico">▸</span>本月活動</button>
+        <button type="button" class="menu__item" data-page="reports"><span class="menu__ico">◎</span>每月回報</button>
+        <button type="button" class="menu__item" data-page="analytics"><span class="menu__ico">▣</span>報表分析</button>
+        <button type="button" class="menu__item" data-page="settings"><span class="menu__ico">⚙</span>設定</button>
       </nav>
 
       <div class="sidebar__foot">
         <div class="drive-card">
-          <div class="drive-card__label">Google Drive Storage</div>
+          <div class="drive-card__label">GOOGLE DRIVE STORAGE</div>
           <div class="drive-card__title">Google Drive</div>
           <div class="drive-card__bar"><span id="storage-fill"></span></div>
           <div class="drive-card__meta" id="storage-meta">8.24GB / 15GB</div>
-          <a class="btn btn--ghost btn--block" href="https://drive.google.com" target="_blank" rel="noopener">前往 Google Drive</a>
+          <a class="btn btn--ghost btn--block" href="https://drive.google.com" target="_blank" rel="noopener">前往 Google Drive →</a>
         </div>
       </div>
     </aside>
 
-    <!-- Center -->
     <div class="workspace">
       <header class="topbar">
         <button type="button" class="icon-btn topbar__menu" id="sidebar-toggle" aria-label="選單">☰</button>
@@ -69,15 +56,15 @@
           <input type="search" id="global-search" placeholder="搜尋姓名、地址、生日、身分證號、電話、文件" autocomplete="off">
         </div>
         <div class="topbar__right">
-          <span class="privacy-chip">僅供本人使用 · 資料不上公開目錄</span>
+          <span class="privacy-chip">僅供本人使用</span>
+          <button type="button" class="btn btn--primary btn--sm" id="top-upload" data-go="upload">UPLOAD ▸</button>
         </div>
       </header>
 
-      <div class="demo-banner">私人單人版 Demo · 本機瀏覽器資料 · 不需填寫個人簡介／帳號介紹</div>
+      <div class="demo-banner">私人單人版 · 羊皮紙介面 Demo · 不需個人簡介 · 資料在本機</div>
       <main class="main" id="content"></main>
     </div>
 
-    <!-- Right Sidebar -->
     <aside class="rail" id="rail"></aside>
   </div>
 
@@ -87,5 +74,13 @@
   <script src="js/zhuyin.js"></script>
   <script src="js/store.js"></script>
   <script src="js/app.js"></script>
+  <script>
+    document.getElementById('announce-dismiss')?.addEventListener('click', function () {
+      document.querySelector('.announce')?.remove();
+    });
+    document.getElementById('top-upload')?.addEventListener('click', function () {
+      document.querySelector('.menu__item[data-page="upload"]')?.click();
+    });
+  </script>
 </body>
 </html>

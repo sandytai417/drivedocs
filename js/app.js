@@ -54,7 +54,7 @@
   }
 
   function privacyBlurb() {
-    return '專為一人使用的私人雲端硬碟介面，不需設定個人資料介紹。';
+    return 'Editorial private drive on parchment — one operator, no profile page, Drive as the only file store.';
   }
 
   function animateBars(root) {
