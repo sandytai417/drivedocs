@@ -8,7 +8,7 @@
     openFolder: null,
     zhuyinFilter: 'all',
     listQuery: '',
-    uploadMode: 'existing', // existing | new
+    uploadMode: 'new', // existing | new
     uploadCustomerId: null,
     uploadCategory: '',
     uploadQueue: [],
@@ -54,7 +54,13 @@
   }
 
   function privacyBlurb() {
-    return '私人雲端相簿牆 — 單人使用、無個人檔案頁，Drive 是唯一檔案庫。';
+    return '私人單人版客戶文件牆 — 資料夾與檔案都在 Google 雲端硬碟，這裡只負責整理與完成度。';
+  }
+
+  function menuPageFor(page) {
+    if (page === 'detail' || page === 'search') return 'customers';
+    if (page === 'new-customer') return 'upload';
+    return page;
   }
 
   function animateBars(root) {
@@ -74,10 +80,19 @@
     if (page === 'upload' && opts.customerId) state.uploadCustomerId = opts.customerId;
     if (page === 'upload' && opts.category) state.uploadCategory = opts.category;
 
+    var active = menuPageFor(page);
     document.querySelectorAll('.menu__item').forEach(function (btn) {
-      btn.classList.toggle('is-active', btn.getAttribute('data-page') === page);
+      btn.classList.toggle('is-active', btn.getAttribute('data-page') === active);
+    });
+    document.querySelectorAll('.navpill__link').forEach(function (btn) {
+      btn.classList.toggle('is-active', btn.getAttribute('data-page') === active);
     });
     $('sidebar').classList.remove('is-open');
+    var backdrop = $('sidebar-backdrop');
+    if (backdrop) {
+      backdrop.hidden = true;
+      backdrop.classList.remove('is-open');
+    }
     render();
   }
 
@@ -182,7 +197,7 @@
           '<span class="polaroid polaroid--5"></span>' +
           '<span class="polaroid polaroid--6"></span>' +
         '</div>' +
-        '<p class="greeting__eyebrow">DRIVEDOCS</p>' +
+        '<p class="greeting__eyebrow">DriveDocs</p>' +
         '<h1>' + greetingText() + '</h1>' +
         '<p>' + privacyBlurb() + '</p>' +
         '<div class="greeting__actions">' +
@@ -216,7 +231,7 @@
 
       '<div class="stack">' +
         '<section class="card">' +
-          '<div class="card__hd"><div><h2 class="card__title">最近更新</h2><p class="card__sub">Recent activity</p></div>' +
+          '<div class="card__hd"><div><h2 class="card__title">最近更新</h2><p class="card__sub">本機近期操作</p></div>' +
           '<button type="button" class="card__link" id="view-all-activity">查看全部</button></div>' +
           '<div class="card__bd">' + renderActivity(d.activity) + '</div>' +
         '</section>' +
@@ -414,7 +429,7 @@
     }).join('');
 
     content.innerHTML =
-      '<section class="greeting"><h1>新增／上傳</h1><p>客戶資料與文件上傳同一頁完成 · 含姓名、電話、Email、生日</p></section>' +
+      '<section class="greeting"><h1>新增／上傳</h1><p>客戶資料與文件上傳同一頁完成 · 含姓名、電話、電子郵件、生日、性別、身分證號、地址</p></section>' +
       '<div class="upload-grid">' +
         '<section class="card">' +
           '<div class="card__hd"><div><h2 class="card__title">客戶資料</h2><p class="card__sub">可選擇既有客戶，或直接填寫新增</p></div></div>' +
@@ -433,7 +448,7 @@
               '<div class="field"><label>電話</label><input id="n-phone" placeholder="0912-123-456" value="' + escapeHtml(selected ? selected.phone : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
             '</div>' +
             '<div class="field-row">' +
-              '<div class="field"><label>Email</label><input id="n-email" placeholder="name@example.com" value="' + escapeHtml(selected ? (selected.email || '') : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
+              '<div class="field"><label>電子郵件</label><input id="n-email" placeholder="name@example.com" value="' + escapeHtml(selected ? (selected.email || '') : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
               '<div class="field"><label>生日</label><input id="n-birthday" type="date" value="' + escapeHtml(selected ? (selected.birthday || '') : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
             '</div>' +
             '<div class="field-row">' +
@@ -466,14 +481,14 @@
               }).join('') +
             '</select></div>' +
             '<div class="dropzone" id="dropzone">' +
-              '<p class="dropzone__title">Drag & Drop</p>' +
-              '<p class="dropzone__hint">PDF · PNG · JPG · DOCX · XLSX</p>' +
+              '<p class="dropzone__title">拖曳檔案到這裡</p>' +
+              '<p class="dropzone__hint">支援 PDF · PNG · JPG · DOCX · XLSX</p>' +
               '<p style="margin-top:1rem"><label class="btn btn--primary">選擇檔案<input type="file" id="file-input" hidden multiple accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx"></label></p>' +
             '</div>' +
             '<div style="margin-top:1rem" id="queue-box">' + renderQueue(typeOpts) + '</div>' +
             '<div class="upload-hint" id="upload-target-hint">' + uploadHint(selected) + '</div>' +
             '<div style="margin-top:1rem;display:flex;gap:0.5rem;justify-content:flex-end">' +
-              '<button type="button" class="btn btn--primary" id="btn-start-upload">建立／上傳到 Drive</button>' +
+              '<button type="button" class="btn btn--primary" id="btn-start-upload">建立／上傳到雲端硬碟</button>' +
             '</div>' +
           '</div>' +
         '</section>' +
@@ -483,13 +498,13 @@
   }
 
   function step(n, title, current) {
-    return '<div class="step' + (current ? ' is-current' : '') + '"><div class="step__n">STEP ' + n + '</div><p class="step__t">' + title + '</p></div>';
+    return '<div class="step' + (current ? ' is-current' : '') + '"><div class="step__n">步驟 ' + n + '</div><p class="step__t">' + title + '</p></div>';
   }
 
   function uploadHint(selected) {
     var settings = DriveDocsStore.getSettings();
     var name = selected ? selected.name : ($('n-name') && $('n-name').value ? $('n-name').value : '（尚未選擇）');
-    return '將上傳至：<br><strong>Google Drive</strong> / ' +
+    return '將上傳至：<br><strong>Google 雲端硬碟</strong> / ' +
       escapeHtml(settings.rootFolderName || '客戶資料') + ' / ' +
       '<strong>' + escapeHtml(name) + '</strong><br>各檔依「文件類型」進入對應分類資料夾';
   }
@@ -641,7 +656,7 @@
       function next() {
         if (i >= state.uploadQueue.length) {
           btn.disabled = false;
-          toast('上傳完成（Demo）');
+          toast('上傳完成（本機示範）');
           var cid = state.uploadCustomerId;
           var lastType = state.uploadQueue.length ? state.uploadQueue[state.uploadQueue.length - 1].docType : null;
           state.uploadQueue = [];
@@ -853,7 +868,7 @@
     }
     var files = data.filesByCategory[state.openFolder] || [];
     el.innerHTML =
-      '<div class="card__hd"><div><h2 class="card__title">' + escapeHtml(state.openFolder) + '</h2><p class="card__sub">File Table</p></div>' +
+      '<div class="card__hd"><div><h2 class="card__title">' + escapeHtml(state.openFolder) + '</h2><p class="card__sub">文件列表</p></div>' +
       '<button type="button" class="btn btn--primary btn--sm" id="btn-upload-folder">上傳到此資料夾</button></div>' +
       '<div class="table-wrap"><table class="table"><thead><tr>' +
         '<th>檔名</th><th>類型</th><th>大小</th><th>上傳日期</th><th>操作</th>' +
@@ -867,7 +882,7 @@
           '<td><div style="display:flex;gap:0.35rem">' +
           '<button type="button" class="btn btn--sm btn--ghost btn-preview">預覽</button>' +
           '<button type="button" class="btn btn--sm btn--ghost btn-dl">下載</button>' +
-          '<button type="button" class="btn btn--sm btn--danger btn-del-file" data-id="' + escapeHtml(f.id) + '" data-name="' + escapeHtml(f.name) + '">更多</button>' +
+          '<button type="button" class="btn btn--sm btn--danger btn-del-file" data-id="' + escapeHtml(f.id) + '" data-name="' + escapeHtml(f.name) + '">刪除</button>' +
           '</div></td></tr>';
       }).join('') : '<tr><td colspan="5"><p class="empty">尚無文件</p></td></tr>') +
       '</tbody></table></div>';
@@ -879,7 +894,7 @@
       setPage('upload');
     };
     el.querySelectorAll('.btn-preview, .btn-dl').forEach(function (btn) {
-      btn.onclick = function () { toast('Demo：正式版會開啟 Google Drive'); };
+      btn.onclick = function () { toast('示範模式：正式版會開啟 Google 雲端硬碟'); };
     });
     el.querySelectorAll('.btn-del-file').forEach(function (btn) {
       btn.onclick = function () {
@@ -900,7 +915,7 @@
       '<section class="card"><div class="card__bd">' +
         '<div class="field-row"><div class="field"><label>姓名</label><input id="c-name" value="' + escapeHtml(c.name) + '"></div>' +
         '<div class="field"><label>電話</label><input id="c-phone" value="' + escapeHtml(c.phone) + '"></div></div>' +
-        '<div class="field-row"><div class="field"><label>Email</label><input id="c-email" value="' + escapeHtml(c.email || '') + '"></div>' +
+        '<div class="field-row"><div class="field"><label>電子郵件</label><input id="c-email" value="' + escapeHtml(c.email || '') + '"></div>' +
         '<div class="field"><label>生日</label><input id="c-birthday" type="date" value="' + escapeHtml(c.birthday || '') + '"></div></div>' +
         '<div class="field-row"><div class="field"><label>性別</label><select id="c-gender">' +
           '<option value="">請選擇</option>' +
@@ -966,7 +981,7 @@
         statCard('🎙', r.lecturesThisWeek, '本週講座') +
         statCard('📅', r.activitiesThisMonth, '本月活動') +
       '</div>' +
-      '<section class="card"><div class="card__hd"><div><h2 class="card__title">Recent Update</h2></div></div>' +
+      '<section class="card"><div class="card__hd"><div><h2 class="card__title">最近更新</h2></div></div>' +
       '<div class="card__bd">' + renderActivity(d.activity) + '</div></section>' +
       '<section class="card" style="margin-top:1rem"><div class="card__hd"><div><h2 class="card__title">近 12 個月</h2></div></div>' +
       '<div class="card__bd"><ul class="activity">' +
@@ -1041,16 +1056,20 @@
       '<div class="stack">' +
         '<section class="card"><div class="card__hd"><div><h2 class="card__title">客戶（' + res.customers.length + '）</h2></div></div>' +
         '<div class="card__bd table-wrap"><table class="table"><tbody>' +
-          res.customers.map(customerRow).join('') +
+          (res.customers.length
+            ? res.customers.map(customerRow).join('')
+            : '<tr><td><p class="empty">沒有符合的客戶</p></td></tr>') +
         '</tbody></table></div></section>' +
         '<section class="card"><div class="card__hd"><div><h2 class="card__title">文件（' + res.files.length + '）</h2></div></div>' +
-        '<div class="card__bd"><ul class="activity">' +
-          res.files.map(function (x) {
-            return '<li class="activity__item" data-id="' + escapeHtml(x.customerId) + '">' +
-              '<div class="activity__ico">📄</div><div><p class="activity__title">' + escapeHtml(x.file.name) + '</p>' +
-              '<p class="activity__desc">' + escapeHtml(x.customerName) + ' · ' + escapeHtml(x.file.category) + '</p></div></li>';
-          }).join('') +
-        '</ul></div></section></div>';
+        '<div class="card__bd">' +
+          (res.files.length
+            ? '<ul class="activity">' + res.files.map(function (x) {
+                return '<li class="activity__item" data-id="' + escapeHtml(x.customerId) + '">' +
+                  '<div class="activity__ico">📄</div><div><p class="activity__title">' + escapeHtml(x.file.name) + '</p>' +
+                  '<p class="activity__desc">' + escapeHtml(x.customerName) + ' · ' + escapeHtml(x.file.category) + '</p></div></li>';
+              }).join('') + '</ul>'
+            : '<p class="empty">沒有符合的文件</p>') +
+        '</div></section></div>';
     bindCustomerList(content, { customers: res.customers, initials: [] });
   }
 
@@ -1059,7 +1078,7 @@
       '<h2>新增客戶</h2>' +
       '<div class="field"><label>姓名</label><input id="m-name" placeholder="王大明"></div>' +
       '<div class="field"><label>電話</label><input id="m-phone" placeholder="0912-123-456"></div>' +
-      '<div class="field"><label>Email</label><input id="m-email"></div>' +
+      '<div class="field"><label>電子郵件</label><input id="m-email"></div>' +
       '<div class="field"><label>生日</label><input id="m-birthday" type="date"></div>' +
       '<div class="field"><label>性別</label><select id="m-gender"><option value="">請選擇</option><option value="男">男</option><option value="女">女</option><option value="其他">其他</option></select></div>' +
       '<div class="field"><label>身分證號</label><input id="m-id" placeholder="A123456789"></div>' +
@@ -1102,9 +1121,21 @@
         setPage(btn.getAttribute('data-page'));
       });
     });
+    function setSidebarOpen(open) {
+      $('sidebar').classList.toggle('is-open', open);
+      var backdrop = $('sidebar-backdrop');
+      if (backdrop) {
+        backdrop.hidden = !open;
+        backdrop.classList.toggle('is-open', open);
+      }
+    }
     $('sidebar-toggle').addEventListener('click', function () {
-      $('sidebar').classList.toggle('is-open');
+      setSidebarOpen(!$('sidebar').classList.contains('is-open'));
     });
+    var backdrop = $('sidebar-backdrop');
+    if (backdrop) {
+      backdrop.addEventListener('click', function () { setSidebarOpen(false); });
+    }
     var timer;
     $('global-search').addEventListener('input', function () {
       clearTimeout(timer);

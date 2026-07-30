@@ -1461,3 +1461,21 @@ a { color: var(--color-off-black); text-decoration: none; }
   .privacy-chip { display: none; }
   .greeting { padding: 32px 12px 40px; }
 }
+
+
+.navpill__link.is-active {
+  color: var(--color-ink-black);
+  background: rgba(13, 13, 13, 0.06);
+  font-weight: 500;
+}
+.sidebar-backdrop {
+  display: none;
+}
+.sidebar-backdrop.is-open {
+  display: block;
+  position: fixed;
+  inset: 0;
+  background: rgba(13, 13, 13, 0.28);
+  z-index: 55;
+}
+.card__link::after { content: " →"; }
