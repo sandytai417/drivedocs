@@ -7,54 +7,80 @@
   <title>DriveDocs</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <div id="app" class="layout">
-    <aside class="sider" id="sidebar">
-      <div class="sider__brand">
-        <span class="sider__mark" aria-hidden="true"></span>
+  <div class="app" id="app">
+    <!-- Left Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar__brand">
+        <div class="logo" aria-hidden="true"></div>
         <div>
-          <div class="sider__name">DriveDocs</div>
-          <div class="sider__sub">Workplace</div>
+          <div class="sidebar__name">DriveDocs</div>
+          <div class="sidebar__tag">客戶文件管理系統</div>
         </div>
       </div>
-      <nav class="sider__nav" aria-label="主選單">
-        <button type="button" class="sider__item is-active" data-page="dashboard"><span class="sider__ico">◈</span>Dashboard</button>
-        <button type="button" class="sider__item" data-page="customers"><span class="sider__ico">☰</span>客戶資料夾</button>
-        <button type="button" class="sider__item" data-page="upload"><span class="sider__ico">↑</span>文件上傳</button>
-        <button type="button" class="sider__item" data-page="reports"><span class="sider__ico">▣</span>報表</button>
-        <button type="button" class="sider__item" data-page="settings"><span class="sider__ico">⚙</span>設定</button>
+
+      <nav class="menu" aria-label="主選單">
+        <button type="button" class="menu__item is-active" data-page="dashboard">
+          <span class="menu__ico" aria-hidden="true">⌂</span>首頁總覽
+        </button>
+        <button type="button" class="menu__item" data-page="customers">
+          <span class="menu__ico" aria-hidden="true">☰</span>客戶列表
+        </button>
+        <button type="button" class="menu__item" data-page="new-customer">
+          <span class="menu__ico" aria-hidden="true">＋</span>新增客戶
+        </button>
+        <button type="button" class="menu__item" data-page="upload">
+          <span class="menu__ico" aria-hidden="true">↑</span>文件上傳
+        </button>
+        <button type="button" class="menu__item" data-page="reports">
+          <span class="menu__ico" aria-hidden="true">◎</span>每日回報
+        </button>
+        <button type="button" class="menu__item" data-page="analytics">
+          <span class="menu__ico" aria-hidden="true">▣</span>報表分析
+        </button>
+        <button type="button" class="menu__item" data-page="settings">
+          <span class="menu__ico" aria-hidden="true">⚙</span>設定
+        </button>
       </nav>
-      <div class="sider__storage">
-        <div class="sider__storage-label">Demo 儲存空間</div>
-        <div class="sider__storage-bar"><span id="storage-fill" style="width:16%"></span></div>
-        <div class="sider__storage-meta" id="storage-meta">本機 Demo · localStorage</div>
+
+      <div class="sidebar__foot">
+        <div class="drive-card">
+          <div class="drive-card__label">Google Drive Storage</div>
+          <div class="drive-card__title">Google Drive</div>
+          <div class="drive-card__bar"><span id="storage-fill"></span></div>
+          <div class="drive-card__meta" id="storage-meta">8.24GB / 15GB</div>
+          <a class="btn btn--ghost btn--block" href="https://drive.google.com" target="_blank" rel="noopener">前往 Google Drive</a>
+        </div>
       </div>
     </aside>
 
-    <div class="stage">
-      <header class="header">
-        <button type="button" class="header__menu" id="sidebar-toggle" aria-label="選單">☰</button>
-        <div class="header__search">
-          <input type="search" id="global-search" placeholder="搜尋客戶、電話、文件…" autocomplete="off">
+    <!-- Center -->
+    <div class="workspace">
+      <header class="topbar">
+        <button type="button" class="icon-btn topbar__menu" id="sidebar-toggle" aria-label="選單">☰</button>
+        <div class="search">
+          <span class="search__ico" aria-hidden="true">⌕</span>
+          <input type="search" id="global-search" placeholder="搜尋客戶姓名、電話、文件" autocomplete="off">
         </div>
-        <div class="header__right">
-          <span class="header__chip">GitHub Pages Demo</span>
-          <div class="header__user">
-            <span class="header__avatar">S</span>
-            <span class="header__uname">示範使用者</span>
+        <div class="topbar__right">
+          <button type="button" class="icon-btn" title="通知" aria-label="通知">🔔</button>
+          <button type="button" class="icon-btn" title="說明" aria-label="說明">?</button>
+          <div class="user">
+            <span class="avatar">王</span>
+            <span class="user__name">王小明</span>
           </div>
         </div>
       </header>
 
-      <div class="notice">
-        靜態 Demo：介面仿雲端硬碟／管理後台。正式版接 Google Drive 見 <code>apps-script/</code>。
-      </div>
-
+      <div class="demo-banner">GitHub Pages Demo · 資料存在本機 · 正式版接 Google Drive 見 <code>apps-script/</code></div>
       <main class="main" id="content"></main>
     </div>
+
+    <!-- Right Sidebar -->
+    <aside class="rail" id="rail"></aside>
   </div>
 
   <div id="toasts" class="toasts" aria-live="polite"></div>
