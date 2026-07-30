@@ -83,8 +83,9 @@
       var content = $('content');
       if (state.page === 'dashboard') renderDashboard(content);
       else if (state.page === 'customers') renderCustomers(content);
-      else if (state.page === 'new-customer') showNewCustomerThenList();
-      else if (state.page === 'upload') renderUpload(content);
+      else if (state.page === 'upload' || state.page === 'new-customer') renderUpload(content);
+      else if (state.page === 'lectures') renderEvents(content, 'lecture');
+      else if (state.page === 'activities') renderEvents(content, 'activity');
       else if (state.page === 'reports' || state.page === 'analytics') renderReports(content);
       else if (state.page === 'settings') renderSettings(content);
       else if (state.page === 'detail') renderDetail(content);
@@ -94,12 +95,6 @@
       $('content').innerHTML = '<div class="card card__bd"><p>' + escapeHtml(err.message || err) + '</p></div>';
       toast(err.message || String(err), true);
     }
-  }
-
-  function showNewCustomerThenList() {
-    // Spec: 新增客戶 can open modal; upload page also supports create inline
-    setPage('customers');
-    setTimeout(showCreateCustomerModal, 50);
   }
 
   /* —— Right rail —— */
@@ -253,11 +248,11 @@
           '</div>' +
           '<div class="toolbar__right">' +
             '<input class="mini-search" id="list-search" placeholder="Search" value="' + escapeHtml(state.listQuery) + '">' +
-            '<button type="button" class="btn btn--primary" id="btn-add-customer">新增客戶</button>' +
+            '<button type="button" class="btn btn--primary" id="btn-add-customer">新增／上傳</button>' +
           '</div>' +
         '</div>' +
         '<div class="table-wrap"><table class="table"><thead><tr>' +
-          '<th>Folder</th><th>姓名</th><th>電話</th><th>完成率</th><th>文件數量</th><th>最後更新</th><th></th>' +
+          '<th>姓名</th><th>電話</th><th>生日</th><th>完成率</th><th>文件數量</th><th>最後更新</th><th></th>' +
         '</tr></thead><tbody>' +
         (customers.length ? customers.map(customerRow).join('') : '<tr><td colspan="7"><p class="empty">沒有符合的客戶</p></td></tr>') +
         '</tbody></table></div>' +
@@ -267,9 +262,12 @@
   function customerRow(c) {
     var done = c.completion >= 100;
     return '<tr data-id="' + escapeHtml(c.id) + '">' +
-      '<td><span class="folder-ico"></span></td>' +
-      '<td><div class="cell-name">' + escapeHtml(c.name) + '</div></td>' +
+      '<td><div class="cell-name">' + escapeHtml(c.name) +
+      '<span style="color:var(--muted);font-weight:500;font-size:0.75rem;margin-left:0.35rem">' +
+      escapeHtml(c.zhuyin || '') + '/' + escapeHtml(DriveDocsZhuyin.getGivenNameZhuyin(c.name)) +
+      '</span></div></td>' +
       '<td>' + escapeHtml(c.phone || '—') + '</td>' +
+      '<td>' + escapeHtml(c.birthday || '—') + '</td>' +
       '<td><div class="progress"><div class="progress__bar"><div class="progress__fill' + (done ? ' is-done' : '') + '" data-width="' + c.completion + '"></div></div>' +
       '<span class="progress__pct">' + c.completion + '%</span></div></td>' +
       '<td>' + (c.fileCount || 0) + '</td>' +
@@ -299,7 +297,7 @@
       };
     }
     var add = content.querySelector('#btn-add-customer');
-    if (add) add.onclick = showCreateCustomerModal;
+    if (add) add.onclick = function () { state.uploadMode = 'new'; setPage('upload'); };
 
     content.querySelectorAll('tbody tr[data-id]').forEach(function (row) {
       row.addEventListener('click', function (e) {
@@ -356,71 +354,71 @@
   function renderUpload(content) {
     var settings = DriveDocsStore.getSettings();
     var customers = DriveDocsStore.listCustomers('zhuyin').customers;
-    if (!state.uploadCategory) state.uploadCategory = settings.categories[0] || '';
+    var defaultType = settings.categories[0] || '01 基本資料';
+    if (!state.uploadCategory) state.uploadCategory = defaultType;
     var selected = customers.find(function (c) { return c.id === state.uploadCustomerId; });
 
     var options = customers.map(function (c) {
-      return '<option value="' + escapeHtml(c.id) + '"' + (state.uploadCustomerId === c.id ? ' selected' : '') + '>' + escapeHtml(c.name) + '</option>';
+      return '<option value="' + escapeHtml(c.id) + '"' + (state.uploadCustomerId === c.id ? ' selected' : '') + '>' + escapeHtml(c.name) + ' · ' + escapeHtml(c.phone || '') + '</option>';
     }).join('');
 
-    var catOpts = (settings.categories || []).map(function (cat) {
-      return '<option value="' + escapeHtml(cat) + '"' + (state.uploadCategory === cat ? ' selected' : '') + '>' + escapeHtml(cat) + '</option>';
+    var typeOpts = (settings.categories || []).map(function (cat) {
+      return '<option value="' + escapeHtml(cat) + '">' + escapeHtml(cat) + '</option>';
     }).join('');
 
     content.innerHTML =
-      '<section class="greeting"><h1>文件上傳</h1><p>先選客戶，再選分類，再上傳至 Google Drive</p></section>' +
-      '<div class="steps">' +
-        step(1, '選擇／新增客戶', true) +
-        step(2, '選擇資料夾', !!state.uploadCustomerId) +
-        step(3, '上傳文件', !!state.uploadCustomerId && !!state.uploadCategory) +
-      '</div>' +
+      '<section class="greeting"><h1>新增／上傳</h1><p>客戶資料與文件上傳同一頁完成 · 含姓名、電話、Email、生日</p></section>' +
       '<div class="upload-grid">' +
         '<section class="card">' +
-          '<div class="card__hd"><div><h2 class="card__title">Step 1 · 客戶</h2><p class="card__sub">同一頁完成，不用跳轉</p></div></div>' +
+          '<div class="card__hd"><div><h2 class="card__title">客戶資料</h2><p class="card__sub">可選擇既有客戶，或直接填寫新增</p></div></div>' +
           '<div class="card__bd">' +
             '<div class="mode-switch">' +
-              '<button type="button" class="mode' + (state.uploadMode === 'existing' ? ' is-active' : '') + '" data-mode="existing">' +
-                '<p class="mode__title">○ 選擇既有客戶</p><p class="mode__desc">從列表挑選</p></button>' +
+              '<button type="button" class="mode' + (state.uploadMode !== 'new' ? ' is-active' : '') + '" data-mode="existing">' +
+                '<p class="mode__title">選擇既有客戶</p><p class="mode__desc">帶入資料後上傳</p></button>' +
               '<button type="button" class="mode' + (state.uploadMode === 'new' ? ' is-active' : '') + '" data-mode="new">' +
-                '<p class="mode__title">● 新增客戶</p><p class="mode__desc">建立並立即選取</p></button>' +
+                '<p class="mode__title">新增客戶</p><p class="mode__desc">填寫後建立並上傳</p></button>' +
             '</div>' +
-            '<div id="upload-step1">' +
-              (state.uploadMode === 'existing'
-                ? '<div class="field"><label>既有客戶</label><select id="up-customer"><option value="">請選擇客戶</option>' + options + '</select></div>'
-                : '<div class="field-row"><div class="field"><label>姓名</label><input id="n-name" placeholder="王大明"></div>' +
-                  '<div class="field"><label>電話</label><input id="n-phone" placeholder="0912-123-456"></div></div>' +
-                  '<div class="field"><label>Email（選填）</label><input id="n-email" placeholder="name@example.com"></div>' +
-                  '<button type="button" class="btn btn--primary" id="btn-create-select">建立並選擇</button>') +
+            (state.uploadMode !== 'new'
+              ? '<div class="field"><label>既有客戶</label><select id="up-customer"><option value="">請選擇</option>' + options + '</select></div>'
+              : '') +
+            '<div class="field-row">' +
+              '<div class="field"><label>姓名</label><input id="n-name" placeholder="王大明" value="' + escapeHtml(selected ? selected.name : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
+              '<div class="field"><label>電話</label><input id="n-phone" placeholder="0912-123-456" value="' + escapeHtml(selected ? selected.phone : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
             '</div>' +
-            (selected ? '<div class="upload-hint" style="margin-top:0.85rem">目前客戶：<strong>' + escapeHtml(selected.name) + '</strong></div>' : '') +
+            '<div class="field-row">' +
+              '<div class="field"><label>Email</label><input id="n-email" placeholder="name@example.com" value="' + escapeHtml(selected ? (selected.email || '') : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
+              '<div class="field"><label>生日</label><input id="n-birthday" type="date" value="' + escapeHtml(selected ? (selected.birthday || '') : '') + '"' + (state.uploadMode !== 'new' && selected ? ' readonly' : '') + '></div>' +
+            '</div>' +
+            (state.uploadMode === 'new'
+              ? '<button type="button" class="btn btn--primary" id="btn-create-select">建立客戶</button>'
+              : '') +
+            (selected ? '<div class="upload-hint" style="margin-top:0.85rem">目前客戶：<strong>' + escapeHtml(selected.name) + '</strong>' + (selected.birthday ? ' · 生日 ' + escapeHtml(selected.birthday) : '') + '</div>' : '') +
           '</div>' +
         '</section>' +
 
         '<section class="card">' +
-          '<div class="card__hd"><div><h2 class="card__title">Step 2 · 資料夾</h2><p class="card__sub">選擇分類</p></div></div>' +
+          '<div class="card__hd"><div><h2 class="card__title">上傳文件</h2><p class="card__sub">每個檔案可選擇文件類型</p></div></div>' +
           '<div class="card__bd">' +
-            '<div class="field"><label>Dropdown</label><select id="up-category">' + catOpts + '</select></div>' +
-          '</div>' +
-        '</section>' +
-
-        '<section class="card">' +
-          '<div class="card__hd"><div><h2 class="card__title">Step 3 · Upload</h2><p class="card__sub">PDF · PNG · JPG · DOCX · XLSX</p></div></div>' +
-          '<div class="card__bd">' +
+            '<div class="field"><label>預設文件類型</label><select id="up-default-type">' +
+              (settings.categories || []).map(function (cat) {
+                return '<option value="' + escapeHtml(cat) + '"' + (state.uploadCategory === cat ? ' selected' : '') + '>' + escapeHtml(cat) + '</option>';
+              }).join('') +
+            '</select></div>' +
             '<div class="dropzone" id="dropzone">' +
               '<p class="dropzone__title">Drag & Drop</p>' +
-              '<p class="dropzone__hint">拖曳檔案到這裡，或選擇檔案</p>' +
+              '<p class="dropzone__hint">PDF · PNG · JPG · DOCX · XLSX</p>' +
               '<p style="margin-top:1rem"><label class="btn btn--primary">選擇檔案<input type="file" id="file-input" hidden multiple accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx"></label></p>' +
             '</div>' +
-            '<div style="margin-top:1rem" id="queue-box">' + renderQueue() + '</div>' +
+            '<div style="margin-top:1rem" id="queue-box">' + renderQueue(typeOpts) + '</div>' +
             '<div class="upload-hint" id="upload-target-hint">' + uploadHint(selected) + '</div>' +
             '<div style="margin-top:1rem;display:flex;gap:0.5rem;justify-content:flex-end">' +
-              '<button type="button" class="btn btn--primary" id="btn-start-upload">開始上傳</button>' +
+              '<button type="button" class="btn btn--primary" id="btn-start-upload">建立／上傳到 Drive</button>' +
             '</div>' +
           '</div>' +
         '</section>' +
       '</div>';
 
-    bindUpload(content);
+    bindUpload(content, typeOpts);
   }
 
   function step(n, title, current) {
@@ -429,31 +427,39 @@
 
   function uploadHint(selected) {
     var settings = DriveDocsStore.getSettings();
-    var cat = state.uploadCategory || (settings.categories[0] || '—');
-    var name = selected ? selected.name : '（尚未選擇）';
+    var name = selected ? selected.name : ($('n-name') && $('n-name').value ? $('n-name').value : '（尚未選擇）');
     return '將上傳至：<br><strong>Google Drive</strong> / ' +
       escapeHtml(settings.rootFolderName || '客戶資料') + ' / ' +
-      '<strong>' + escapeHtml(name) + '</strong> / ' +
-      escapeHtml(cat);
+      '<strong>' + escapeHtml(name) + '</strong><br>各檔依「文件類型」進入對應分類資料夾';
   }
 
-  function renderQueue() {
+  function renderQueue(typeOpts) {
+    typeOpts = typeOpts || '';
     if (!state.uploadQueue.length) return '<p class="empty" style="padding:1rem 0">尚未加入檔案</p>';
     return '<ul class="queue">' + state.uploadQueue.map(function (item, idx) {
-      return '<li class="queue__item">' +
+      var opts = (DriveDocsStore.getSettings().categories || []).map(function (cat) {
+        return '<option value="' + escapeHtml(cat) + '"' + (item.docType === cat ? ' selected' : '') + '>' + escapeHtml(cat) + '</option>';
+      }).join('');
+      return '<li class="queue__item" style="grid-template-columns:40px 1fr;align-items:start">' +
         '<div class="activity__ico">📄</div>' +
-        '<div><p class="queue__name">' + escapeHtml(item.name) + '</p>' +
-        '<p class="queue__meta">' + escapeHtml(formatSize(item.size)) + '</p>' +
-        '<div class="progress__bar" style="margin-top:0.4rem"><div class="progress__fill" style="width:' + (item.progress || 0) + '%"></div></div></div>' +
-        '<div style="text-align:right"><div class="queue__status">' + escapeHtml(item.status || '等待中') + '</div>' +
-        '<button type="button" class="btn btn--sm btn--ghost btn-rm-q" data-idx="' + idx + '" style="margin-top:0.35rem">移除</button></div></li>';
+        '<div style="min-width:0">' +
+          '<div style="display:flex;justify-content:space-between;gap:0.5rem;align-items:start">' +
+            '<div><p class="queue__name">' + escapeHtml(item.name) + '</p>' +
+            '<p class="queue__meta">' + escapeHtml(formatSize(item.size)) + ' · ' + escapeHtml(item.status || '等待中') + '</p></div>' +
+            '<button type="button" class="btn btn--sm btn--ghost btn-rm-q" data-idx="' + idx + '">移除</button>' +
+          '</div>' +
+          '<div class="field" style="margin:0.55rem 0 0"><label>文件類型</label>' +
+            '<select class="doc-type" data-idx="' + idx + '">' + opts + '</select></div>' +
+          '<div class="progress__bar" style="margin-top:0.45rem"><div class="progress__fill" style="width:' + (item.progress || 0) + '%"></div></div>' +
+        '</div></li>';
     }).join('') + '</ul>';
   }
 
-  function bindUpload(content) {
+  function bindUpload(content, typeOpts) {
     content.querySelectorAll('.mode').forEach(function (btn) {
       btn.onclick = function () {
         state.uploadMode = btn.getAttribute('data-mode');
+        if (state.uploadMode === 'new') state.uploadCustomerId = null;
         renderUpload(content);
       };
     });
@@ -465,15 +471,14 @@
         renderUpload(content);
       };
     }
-    var cat = $('up-category');
-    if (cat) {
-      cat.onchange = function () {
-        state.uploadCategory = cat.value;
-        var hint = $('upload-target-hint');
-        var selected = DriveDocsStore.listCustomers('zhuyin').customers.find(function (c) { return c.id === state.uploadCustomerId; });
-        if (hint) hint.innerHTML = uploadHint(selected);
+
+    var defType = $('up-default-type');
+    if (defType) {
+      defType.onchange = function () {
+        state.uploadCategory = defType.value;
       };
     }
+
     var createBtn = $('btn-create-select');
     if (createBtn) {
       createBtn.onclick = function () {
@@ -481,32 +486,41 @@
           var row = DriveDocsStore.createCustomer({
             name: $('n-name').value.trim(),
             phone: $('n-phone').value.trim(),
-            email: $('n-email').value.trim()
+            email: $('n-email').value.trim(),
+            birthday: $('n-birthday').value
           });
           state.uploadCustomerId = row.id;
           state.uploadMode = 'existing';
-          toast('已建立並選擇「' + row.name + '」');
+          toast('已建立「' + row.name + '」');
           renderUpload(content);
         } catch (err) { toast(err.message || err, true); }
       };
     }
 
     function refreshQueue() {
-      $('queue-box').innerHTML = renderQueue();
+      $('queue-box').innerHTML = renderQueue(typeOpts);
       $('queue-box').querySelectorAll('.btn-rm-q').forEach(function (btn) {
         btn.onclick = function () {
           state.uploadQueue.splice(Number(btn.getAttribute('data-idx')), 1);
           refreshQueue();
         };
       });
+      $('queue-box').querySelectorAll('.doc-type').forEach(function (sel) {
+        sel.onchange = function () {
+          var idx = Number(sel.getAttribute('data-idx'));
+          state.uploadQueue[idx].docType = sel.value;
+        };
+      });
     }
 
     function addFiles(fileList) {
+      var fallback = ($('up-default-type') && $('up-default-type').value) || state.uploadCategory;
       Array.prototype.forEach.call(fileList || [], function (file) {
         state.uploadQueue.push({
           name: file.name,
           size: file.size,
           mimeType: file.type || 'application/octet-stream',
+          docType: fallback,
           progress: 0,
           status: '等待中'
         });
@@ -528,10 +542,33 @@
     });
 
     $('btn-start-upload').onclick = function () {
-      if (!state.uploadCustomerId) { toast('請先選擇或建立客戶', true); return; }
-      if (!state.uploadCategory) { toast('請選擇資料夾', true); return; }
-      if (!state.uploadQueue.length) { toast('請加入檔案', true); return; }
       var btn = $('btn-start-upload');
+      try {
+        if (!state.uploadCustomerId) {
+          // auto-create from form when in new mode or fields filled
+          var name = $('n-name').value.trim();
+          if (!name) { toast('請選擇客戶或填寫姓名', true); return; }
+          var existing = DriveDocsStore.listCustomers('zhuyin').customers.find(function (c) { return c.name === name; });
+          if (existing) {
+            state.uploadCustomerId = existing.id;
+          } else {
+            var row = DriveDocsStore.createCustomer({
+              name: name,
+              phone: $('n-phone').value.trim(),
+              email: $('n-email').value.trim(),
+              birthday: $('n-birthday').value
+            });
+            state.uploadCustomerId = row.id;
+            toast('已建立客戶「' + row.name + '」');
+          }
+        }
+      } catch (err) { toast(err.message || err, true); return; }
+
+      if (!state.uploadQueue.length) { toast('請加入檔案（若只新建客戶可不傳檔）', true); 
+        setPage('detail', { customerId: state.uploadCustomerId, tab: 'info' });
+        return;
+      }
+
       btn.disabled = true;
       var i = 0;
       function next() {
@@ -539,8 +576,9 @@
           btn.disabled = false;
           toast('上傳完成（Demo）');
           var cid = state.uploadCustomerId;
+          var lastType = state.uploadQueue.length ? state.uploadQueue[state.uploadQueue.length - 1].docType : null;
           state.uploadQueue = [];
-          setPage('detail', { customerId: cid, tab: 'folders', openFolder: state.uploadCategory });
+          setPage('detail', { customerId: cid, tab: 'folders', openFolder: lastType });
           return;
         }
         var item = state.uploadQueue[i];
@@ -553,7 +591,7 @@
             refreshQueue();
             DriveDocsStore.uploadDocument({
               customerId: state.uploadCustomerId,
-              category: state.uploadCategory,
+              category: item.docType || state.uploadCategory,
               fileName: item.name,
               mimeType: item.mimeType,
               size: item.size
@@ -575,6 +613,60 @@
     };
   }
 
+  function renderEvents(content, kind) {
+    var isLecture = kind === 'lecture';
+    var title = isLecture ? '本週講座' : '本月活動';
+    var period = isLecture ? DriveDocsStore.currentWeekLabel() : DriveDocsStore.currentMonthLabel();
+    var items = isLecture ? DriveDocsStore.listLectures() : DriveDocsStore.listActivities();
+    var current = items.filter(function (x) { return x.period === period; });
+    var older = items.filter(function (x) { return x.period !== period; });
+
+    content.innerHTML =
+      '<section class="greeting"><h1>' + title + '</h1>' +
+      '<p>期間：' + escapeHtml(period) + ' · 可上傳簡報、講義、海報等資料</p></section>' +
+      '<section class="card" style="margin-bottom:1rem"><div class="card__hd"><div><h2 class="card__title">新增' + (isLecture ? '講座' : '活動') + '</h2></div></div>' +
+      '<div class="card__bd">' +
+        '<div class="field-row"><div class="field"><label>標題</label><input id="ev-title" placeholder="' + (isLecture ? '例：退休金規劃講座' : '例：客戶答謝午宴') + '"></div>' +
+        '<div class="field"><label>期間</label><input id="ev-period" value="' + escapeHtml(period) + '"></div></div>' +
+        '<div class="field"><label>備註</label><input id="ev-notes" placeholder="地點、講者、對象…"></div>' +
+        '<div class="field"><label>上傳檔案</label><input type="file" id="ev-files" multiple accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx,.ppt,.pptx"></div>' +
+        '<button type="button" class="btn btn--primary" id="btn-ev-create">建立並上傳</button>' +
+      '</div></section>' +
+      '<section class="card"><div class="card__hd"><div><h2 class="card__title">本期（' + escapeHtml(period) + '）</h2></div></div>' +
+      '<div class="card__bd">' + renderEventList(current) + '</div></section>' +
+      (older.length ? '<section class="card" style="margin-top:1rem"><div class="card__hd"><div><h2 class="card__title">歷史紀錄</h2></div></div><div class="card__bd">' + renderEventList(older) + '</div></section>' : '');
+
+    $('btn-ev-create').onclick = function () {
+      try {
+        var filesInput = $('ev-files').files;
+        var files = Array.prototype.map.call(filesInput || [], function (f) {
+          return { id: Math.random().toString(16).slice(2), name: f.name, size: f.size, mimeType: f.type, createdAt: new Date().toISOString() };
+        });
+        var payload = {
+          title: $('ev-title').value.trim(),
+          period: $('ev-period').value.trim() || period,
+          notes: $('ev-notes').value.trim(),
+          files: files
+        };
+        if (isLecture) DriveDocsStore.createLecture(payload);
+        else DriveDocsStore.createActivity(payload);
+        toast('已建立');
+        renderEvents(content, kind);
+      } catch (err) { toast(err.message || err, true); }
+    };
+  }
+
+  function renderEventList(items) {
+    if (!items.length) return '<p class="empty">尚無資料</p>';
+    return '<ul class="activity">' + items.map(function (ev) {
+      var fileNames = (ev.files || []).map(function (f) { return f.name; }).join('、') || '尚無檔案';
+      return '<li class="activity__item"><div class="activity__ico">📎</div><div>' +
+        '<p class="activity__title">' + escapeHtml(ev.title) + '</p>' +
+        '<p class="activity__desc">' + escapeHtml(ev.period) + (ev.notes ? ' · ' + escapeHtml(ev.notes) : '') + '<br>' + escapeHtml(fileNames) + '</p></div>' +
+        '<div class="activity__time">' + escapeHtml(formatDate(ev.createdAt)) + '</div></li>';
+    }).join('') + '</ul>';
+  }
+
   /* —— Detail —— */
   function renderDetail(content) {
     var data = DriveDocsStore.getCustomer(state.customerId);
@@ -585,7 +677,9 @@
       '<div class="detail-head">' +
         '<div class="detail-head__folder"></div>' +
         '<div><h1>' + escapeHtml(c.name) + '</h1>' +
-        '<p class="detail-head__meta">' + escapeHtml(c.phone || '無電話') + (c.email ? ' · ' + escapeHtml(c.email) : '') + '</p></div>' +
+        '<p class="detail-head__meta">' + escapeHtml(c.phone || '無電話') +
+        (c.birthday ? ' · 生日 ' + escapeHtml(c.birthday) : '') +
+        (c.email ? ' · ' + escapeHtml(c.email) : '') + '</p></div>' +
         '<div class="detail-head__right">' +
           '<div class="progress" style="min-width:160px"><div class="progress__bar"><div class="progress__fill' + (c.completion >= 100 ? ' is-done' : '') + '" data-width="' + c.completion + '"></div></div>' +
           '<span class="progress__pct">' + c.completion + '%</span></div>' +
@@ -734,7 +828,8 @@
       '<section class="card"><div class="card__bd">' +
         '<div class="field-row"><div class="field"><label>姓名</label><input id="c-name" value="' + escapeHtml(c.name) + '"></div>' +
         '<div class="field"><label>電話</label><input id="c-phone" value="' + escapeHtml(c.phone) + '"></div></div>' +
-        '<div class="field"><label>Email</label><input id="c-email" value="' + escapeHtml(c.email) + '"></div>' +
+        '<div class="field-row"><div class="field"><label>Email</label><input id="c-email" value="' + escapeHtml(c.email || '') + '"></div>' +
+        '<div class="field"><label>生日</label><input id="c-birthday" type="date" value="' + escapeHtml(c.birthday || '') + '"></div></div>' +
         '<div class="field"><label>標籤</label><input id="c-tags" value="' + escapeHtml((c.tags || []).join(', ')) + '"></div>' +
         '<button type="button" class="btn btn--primary" id="btn-save-info">儲存</button>' +
       '</div></section>';
@@ -743,6 +838,7 @@
         name: $('c-name').value,
         phone: $('c-phone').value,
         email: $('c-email').value,
+        birthday: $('c-birthday').value,
         tags: $('c-tags').value.split(/[,，]/).map(function (t) { return t.trim(); }).filter(Boolean)
       });
       toast('已儲存');
@@ -772,21 +868,25 @@
     var r = DriveDocsStore.getReports();
     var d = DriveDocsStore.getDashboard();
     content.innerHTML =
-      '<section class="greeting"><h1>' + (state.page === 'analytics' ? '報表分析' : '每日回報') + '</h1>' +
-      '<p>聚焦進度與活動，不顯示缺件壓力指標</p></section>' +
+      '<section class="greeting"><h1>' + (state.page === 'analytics' ? '報表分析' : '每月回報') + '</h1>' +
+      '<p>本月 ' + escapeHtml(r.month) + ' · 聚焦進度與活動</p></section>' +
       '<div class="overview" style="grid-template-columns:repeat(4,minmax(0,1fr))">' +
-        statCard('＋', r.today.newCustomers, '今日新增') +
-        statCard('↑', r.today.organized, '今日整理') +
+        statCard('＋', r.monthStats.newCustomers, '本月新增客戶') +
+        statCard('↑', r.monthStats.organized, '本月整理') +
         statCard('%', r.completionRate + '%', '完成率') +
         statCard('📄', d.totalFiles, '文件總計') +
       '</div>' +
+      '<div class="overview" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:0">' +
+        statCard('🎙', r.lecturesThisWeek, '本週講座') +
+        statCard('📅', r.activitiesThisMonth, '本月活動') +
+      '</div>' +
       '<section class="card"><div class="card__hd"><div><h2 class="card__title">Recent Update</h2></div></div>' +
       '<div class="card__bd">' + renderActivity(d.activity) + '</div></section>' +
-      '<section class="card" style="margin-top:1rem"><div class="card__hd"><div><h2 class="card__title">近 14 日</h2></div></div>' +
+      '<section class="card" style="margin-top:1rem"><div class="card__hd"><div><h2 class="card__title">近 12 個月</h2></div></div>' +
       '<div class="card__bd"><ul class="activity">' +
         (r.history.length ? r.history.map(function (h) {
           return '<li class="activity__item"><div class="activity__ico">▣</div><div>' +
-            '<p class="activity__title">' + escapeHtml(h.date) + '</p>' +
+            '<p class="activity__title">' + escapeHtml(h.month) + '</p>' +
             '<p class="activity__desc">新增 ' + h.newCustomers + ' · 整理 ' + h.organized + '</p></div></li>';
         }).join('') : '<p class="empty">尚無資料</p>') +
       '</ul></div></section>';
@@ -873,7 +973,8 @@
       '<h2>新增客戶</h2>' +
       '<div class="field"><label>姓名</label><input id="m-name" placeholder="王大明"></div>' +
       '<div class="field"><label>電話</label><input id="m-phone" placeholder="0912-123-456"></div>' +
-      '<div class="field"><label>Email（選填）</label><input id="m-email"></div>' +
+      '<div class="field"><label>Email</label><input id="m-email"></div>' +
+      '<div class="field"><label>生日</label><input id="m-birthday" type="date"></div>' +
       '<div class="modal__actions">' +
         '<button type="button" class="btn" id="m-cancel">取消</button>' +
         '<button type="button" class="btn btn--primary" id="m-ok">建立</button></div>'
@@ -884,7 +985,8 @@
         var c = DriveDocsStore.createCustomer({
           name: $('m-name').value.trim(),
           phone: $('m-phone').value.trim(),
-          email: $('m-email').value.trim()
+          email: $('m-email').value.trim(),
+          birthday: $('m-birthday').value
         });
         closeModal();
         toast('已建立「' + c.name + '」');

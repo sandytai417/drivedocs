@@ -100,6 +100,31 @@ var SURNAME_ZHUYIN = {
   '柏': 'ㄅ'
 };
 
+/** Extra given-name characters (名字用字) for secondary zhuyin sort */
+var GIVEN_ZHUYIN = {
+  '大': 'ㄉ', '明': 'ㄇ', '美': 'ㄇ', '玲': 'ㄌ', '雅': 'ㄧ', '婷': 'ㄊ',
+  '志': 'ㄓ', '豪': 'ㄏ', '子': 'ㄗ', '恩': 'ㄣ', '怡': 'ㄧ', '君': 'ㄐ',
+  '建': 'ㄐ', '詩': 'ㄕ', '涵': 'ㄏ', '俊': 'ㄐ', '傑': 'ㄐ', '小': 'ㄒ',
+  '華': 'ㄏ', '強': 'ㄑ', '偉': 'ㄨ', '芳': 'ㄈ', '淑': 'ㄕ', '惠': 'ㄏ',
+  '佩': 'ㄆ', '蓉': 'ㄖ', '萱': 'ㄒ', '妤': 'ㄩ', '安': 'ㄢ', '宇': 'ㄩ',
+  '辰': 'ㄔ', '軒': 'ㄒ', '彤': 'ㄊ', '瑜': 'ㄩ', '婷': 'ㄊ', '雯': 'ㄨ',
+  '萍': 'ㄆ', '蓉': 'ㄖ', '嘉': 'ㄐ', '蓉': 'ㄖ', '蓉': 'ㄖ', '欣': 'ㄒ',
+  '怡': 'ㄧ', '萱': 'ㄒ', '婕': 'ㄐ', '琳': 'ㄌ', '瑩': 'ㄧ', '潔': 'ㄐ',
+  '哲': 'ㄓ', '凱': 'ㄎ', '翔': 'ㄒ', '瑋': 'ㄨ', '宏': 'ㄏ', '達': 'ㄉ',
+  '文': 'ㄨ', '武': 'ㄨ', '德': 'ㄉ', '仁': 'ㄖ', '義': 'ㄧ', '禮': 'ㄌ',
+  '智': 'ㄓ', '信': 'ㄒ', '忠': 'ㄓ', '孝': 'ㄒ', '榮': 'ㄖ', '輝': 'ㄏ',
+  '麗': 'ㄌ', '娟': 'ㄐ', '秀': 'ㄒ', '英': 'ㄧ', '芬': 'ㄈ', '蘭': 'ㄌ',
+  '玉': 'ㄩ', '珍': 'ㄓ', '珠': 'ㄓ', '鳳': 'ㄈ', '凰': 'ㄏ', '龍': 'ㄌ',
+  '虎': 'ㄏ', '生': 'ㄕ', '成': 'ㄔ', '國': 'ㄍ', '民': 'ㄇ', '中': 'ㄓ',
+  '正': 'ㄓ', '平': 'ㄆ', '和': 'ㄏ', '樂': 'ㄌ', '喜': 'ㄒ', '福': 'ㄈ',
+  '春': 'ㄔ', '夏': 'ㄒ', '秋': 'ㄑ', '冬': 'ㄉ', '月': 'ㄩ', '星': 'ㄒ',
+  '雲': 'ㄩ', '雨': 'ㄩ', '風': 'ㄈ', '山': 'ㄕ', '海': 'ㄏ', '川': 'ㄔ',
+  '彥': 'ㄧ', '廷': 'ㄊ', '佑': 'ㄧ', '宸': 'ㄔ', '毅': 'ㄧ', '綸': 'ㄌ',
+  '柏': 'ㄅ', '翰': 'ㄏ', '澤': 'ㄗ', '銘': 'ㄇ', '傑': 'ㄐ', '峯': 'ㄈ',
+  '峰': 'ㄈ', '旻': 'ㄇ', '昕': 'ㄒ', '柔': 'ㄖ', '晴': 'ㄑ', '語': 'ㄩ',
+  '芯': 'ㄒ', '妮': 'ㄋ', '薇': 'ㄨ', '蕾': 'ㄌ', '芝': 'ㄓ', '芸': 'ㄩ'
+};
+
 /**
  * Get 注音 initial for a Chinese character / name.
  * @param {string} name
@@ -109,10 +134,22 @@ function getZhuyinInitial(name) {
   if (!name || !String(name).trim()) return '#';
   var ch = String(name).trim().charAt(0);
   if (SURNAME_ZHUYIN[ch]) return SURNAME_ZHUYIN[ch];
+  if (GIVEN_ZHUYIN[ch]) return GIVEN_ZHUYIN[ch];
   // Latin / digit fallback
   if (/[A-Za-z]/.test(ch)) return '#';
   if (/[0-9]/.test(ch)) return '#';
   return '#';
+}
+
+/**
+ * Zhuyin of the given-name first character (第 2 字), for tie-break after surname.
+ * @param {string} fullName
+ * @return {string}
+ */
+function getGivenNameZhuyin(fullName) {
+  var n = String(fullName || '').trim();
+  if (n.length < 2) return '#';
+  return getZhuyinInitial(n.charAt(1));
 }
 
 /**
@@ -133,20 +170,21 @@ function zhuyinIndex(initial) {
  * @return {number}
  */
 function compareByZhuyin(a, b) {
-  var na = String(a || '');
-  var nb = String(b || '');
-  var ia = getZhuyinInitial(na);
-  var ib = getZhuyinInitial(nb);
-  var di = zhuyinIndex(ia) - zhuyinIndex(ib);
+  var na = String(a || '').trim();
+  var nb = String(b || '').trim();
+  // 1) 姓氏注音
+  var di = zhuyinIndex(getZhuyinInitial(na)) - zhuyinIndex(getZhuyinInitial(nb));
   if (di !== 0) return di;
+  // 2) 同姓內：名字第一字注音
+  var dg = zhuyinIndex(getGivenNameZhuyin(na)) - zhuyinIndex(getGivenNameZhuyin(nb));
+  if (dg !== 0) return dg;
+  // 3) 其餘字元依注音，再比完整姓名
   var len = Math.max(na.length, nb.length);
-  for (var i = 0; i < len; i++) {
+  for (var i = 2; i < len; i++) {
     var ca = na.charAt(i) || '';
     var cb = nb.charAt(i) || '';
     if (ca === cb) continue;
-    var za = getZhuyinInitial(ca);
-    var zb = getZhuyinInitial(cb);
-    var dz = zhuyinIndex(za) - zhuyinIndex(zb);
+    var dz = zhuyinIndex(getZhuyinInitial(ca)) - zhuyinIndex(getZhuyinInitial(cb));
     if (dz !== 0) return dz;
     if (ca < cb) return -1;
     if (ca > cb) return 1;
@@ -183,6 +221,7 @@ function groupByZhuyin(customers) {
 window.DriveDocsZhuyin = {
   ZHUYIN_ORDER: ZHUYIN_ORDER,
   getZhuyinInitial: getZhuyinInitial,
+  getGivenNameZhuyin: getGivenNameZhuyin,
   zhuyinIndex: zhuyinIndex,
   compareByZhuyin: compareByZhuyin,
   groupByZhuyin: groupByZhuyin

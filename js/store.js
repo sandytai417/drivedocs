@@ -5,7 +5,7 @@
 (function (global) {
   'use strict';
 
-  var KEY = 'drivedocs.v2';
+  var KEY = 'drivedocs.v3';
   var DEFAULT_CATEGORIES = [
     '01 基本資料',
     '02 保單',
@@ -51,7 +51,9 @@
       customers: [],
       files: {},
       activity: [],
-      reports: {}
+      reports: {},
+      lectures: [],
+      activities: []
     };
   }
 
@@ -79,7 +81,24 @@
       seed(s);
       save(s);
     }
+    if (!s.lectures) s.lectures = [];
+    if (!s.activities) s.activities = [];
     return s;
+  }
+
+  function monthKey(iso) {
+    return String(iso || todayStr()).slice(0, 7);
+  }
+
+  function currentWeekLabel() {
+    var d = new Date();
+    var onejan = new Date(d.getFullYear(), 0, 1);
+    var week = Math.ceil((((d - onejan) / 86400000) + onejan.getDay() + 1) / 7);
+    return d.getFullYear() + '-W' + String(week).padStart(2, '0');
+  }
+
+  function currentMonthLabel() {
+    return todayStr().slice(0, 7);
   }
 
   function bumpReport(state, field, delta) {
@@ -168,16 +187,16 @@
 
   function seed(state) {
     var samples = [
-      { name: '白雅婷', phone: '0912-345-678', email: 'pai@example.com', tags: ['保險'] },
-      { name: '包志明', phone: '0922-111-222', email: 'bao@example.com', tags: ['房仲'] },
-      { name: '柏建豪', phone: '0933-888-999', email: 'bo@example.com', tags: ['財務'] },
-      { name: '潘怡君', phone: '0918-555-666', email: 'pan@example.com', tags: ['保險'] },
-      { name: '馬志豪', phone: '0955-123-456', email: 'ma@example.com', tags: ['會計'] },
-      { name: '毛子恩', phone: '0966-777-888', email: 'mao@example.com', tags: ['法律'] },
-      { name: '王大明', phone: '0912-123-456', email: 'wang@example.com', tags: ['保險', 'VIP'] },
-      { name: '陳美玲', phone: '0977-222-333', email: 'chen@example.com', tags: ['代書'] },
-      { name: '林俊傑', phone: '0988-444-555', email: 'lin@example.com', tags: ['保險'] },
-      { name: '黃詩涵', phone: '0911-666-777', email: 'huang@example.com', tags: ['財務'] }
+      { name: '白雅婷', phone: '0912-345-678', email: 'pai@example.com', birthday: '1992-03-18', tags: ['保險'] },
+      { name: '包志明', phone: '0922-111-222', email: 'bao@example.com', birthday: '1988-11-02', tags: ['房仲'] },
+      { name: '柏建豪', phone: '0933-888-999', email: 'bo@example.com', birthday: '1990-07-21', tags: ['財務'] },
+      { name: '潘怡君', phone: '0918-555-666', email: 'pan@example.com', birthday: '1995-01-09', tags: ['保險'] },
+      { name: '馬志豪', phone: '0955-123-456', email: 'ma@example.com', birthday: '1985-05-30', tags: ['會計'] },
+      { name: '毛子恩', phone: '0966-777-888', email: 'mao@example.com', birthday: '1998-09-12', tags: ['法律'] },
+      { name: '王大明', phone: '0912-123-456', email: 'wang@example.com', birthday: '1980-08-08', tags: ['保險', 'VIP'] },
+      { name: '陳美玲', phone: '0977-222-333', email: 'chen@example.com', birthday: '1991-12-25', tags: ['代書'] },
+      { name: '林俊傑', phone: '0988-444-555', email: 'lin@example.com', birthday: '1987-04-14', tags: ['保險'] },
+      { name: '黃詩涵', phone: '0911-666-777', email: 'huang@example.com', birthday: '1993-06-06', tags: ['財務'] }
     ];
 
     samples.forEach(function (s, idx) {
@@ -205,6 +224,7 @@
         name: s.name,
         phone: s.phone,
         email: s.email,
+        birthday: s.birthday || '',
         tags: s.tags,
         notes: '',
         createdAt: now,
@@ -239,6 +259,23 @@
       if (i % 2 === 0) {
         addFile(state, c.id, '02 保單', { name: '保單副本.pdf', mimeType: 'application/pdf', size: 200000 }, true);
       }
+    });
+
+    state.lectures.push({
+      id: uid(),
+      title: '退休金規劃講座',
+      period: currentWeekLabel(),
+      notes: '線上 · 週三晚間',
+      files: [{ id: uid(), name: '講座簡報.pdf', size: 1024000, mimeType: 'application/pdf', createdAt: nowIso() }],
+      createdAt: nowIso()
+    });
+    state.activities.push({
+      id: uid(),
+      title: '客戶答謝午宴',
+      period: currentMonthLabel(),
+      notes: '台北市',
+      files: [{ id: uid(), name: '活動海報.jpg', size: 512000, mimeType: 'image/jpeg', createdAt: nowIso() }],
+      createdAt: nowIso()
     });
   }
 
@@ -323,6 +360,7 @@
         name: name,
         phone: data.phone || '',
         email: data.email || '',
+        birthday: data.birthday || '',
         tags: data.tags || [],
         notes: data.notes || '',
         createdAt: now,
@@ -355,6 +393,7 @@
       }
       if (data.phone !== undefined) c.phone = data.phone;
       if (data.email !== undefined) c.email = data.email;
+      if (data.birthday !== undefined) c.birthday = data.birthday;
       if (data.notes !== undefined) c.notes = data.notes;
       if (data.tags !== undefined) c.tags = data.tags;
       if (data.status !== undefined) c.status = data.status;
@@ -499,33 +538,106 @@
 
     getReports: function () {
       var s = getState();
-      var today = todayStr();
-      var report = s.reports[today] || { newCustomers: 0, organized: 0, updates: 0 };
+      var month = currentMonthLabel();
       var sum = 0;
       s.customers.forEach(function (c) {
         refreshCustomer(s, c.id);
         sum += c.completion;
       });
       save(s);
-      var history = Object.keys(s.reports).sort().reverse().slice(0, 14).map(function (date) {
-        var r = s.reports[date];
-        return {
-          date: date,
-          newCustomers: r.newCustomers || 0,
-          organized: r.organized || 0,
-          updates: r.updates || 0
-        };
+
+      // Aggregate daily report keys into months
+      var byMonth = {};
+      Object.keys(s.reports).forEach(function (date) {
+        var m = monthKey(date);
+        if (!byMonth[m]) byMonth[m] = { month: m, newCustomers: 0, organized: 0, updates: 0 };
+        byMonth[m].newCustomers += Number(s.reports[date].newCustomers) || 0;
+        byMonth[m].organized += Number(s.reports[date].organized) || 0;
+        byMonth[m].updates += Number(s.reports[date].updates) || 0;
       });
+      var thisMonth = byMonth[month] || { month: month, newCustomers: 0, organized: 0, updates: 0 };
+      var history = Object.keys(byMonth).sort().reverse().slice(0, 12).map(function (m) {
+        return byMonth[m];
+      });
+
       return {
+        month: month,
         today: {
-          newCustomers: report.newCustomers || 0,
-          organized: report.organized || 0,
-          updates: report.updates || 0
+          newCustomers: thisMonth.newCustomers,
+          organized: thisMonth.organized,
+          updates: thisMonth.updates
         },
+        monthStats: thisMonth,
         completionRate: s.customers.length ? Math.round(sum / s.customers.length) : 0,
-        history: history
+        history: history,
+        lecturesThisWeek: (s.lectures || []).filter(function (x) { return x.period === currentWeekLabel(); }).length,
+        activitiesThisMonth: (s.activities || []).filter(function (x) { return x.period === month; }).length
       };
-    }
+    },
+
+    listLectures: function () {
+      var s = getState();
+      return (s.lectures || []).slice().sort(function (a, b) {
+        return String(b.createdAt).localeCompare(String(a.createdAt));
+      });
+    },
+
+    listActivities: function () {
+      var s = getState();
+      return (s.activities || []).slice().sort(function (a, b) {
+        return String(b.createdAt).localeCompare(String(a.createdAt));
+      });
+    },
+
+    createLecture: function (data) {
+      var s = getState();
+      var row = {
+        id: uid(),
+        title: String(data.title || '').trim() || '未命名講座',
+        period: data.period || currentWeekLabel(),
+        notes: data.notes || '',
+        files: data.files || [],
+        createdAt: nowIso()
+      };
+      s.lectures.unshift(row);
+      logActivity(s, '', row.title, 'lecture', '本週講座 · ' + row.title);
+      bumpReport(s, 'updates', 1);
+      save(s);
+      return row;
+    },
+
+    createActivity: function (data) {
+      var s = getState();
+      var row = {
+        id: uid(),
+        title: String(data.title || '').trim() || '未命名活動',
+        period: data.period || currentMonthLabel(),
+        notes: data.notes || '',
+        files: data.files || [],
+        createdAt: nowIso()
+      };
+      s.activities.unshift(row);
+      logActivity(s, '', row.title, 'activity', '本月活動 · ' + row.title);
+      bumpReport(s, 'updates', 1);
+      save(s);
+      return row;
+    },
+
+    addEventFiles: function (kind, eventId, files) {
+      var s = getState();
+      var list = kind === 'lecture' ? s.lectures : s.activities;
+      var row = list.find(function (x) { return x.id === eventId; });
+      if (!row) throw new Error('找不到項目');
+      row.files = (row.files || []).concat(files || []);
+      row.updatedAt = nowIso();
+      bumpReport(s, 'organized', (files || []).length);
+      bumpReport(s, 'updates', 1);
+      save(s);
+      return row;
+    },
+
+    currentWeekLabel: currentWeekLabel,
+    currentMonthLabel: currentMonthLabel
   };
 
   global.DriveDocsStore = api;
