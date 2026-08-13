@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#fafafa">
+  <title>DriveDocs</title>
+  <?!= include('Stylesheet'); ?>
+</head>
+<body>
+  <div id="boot" class="boot">
+    <p class="boot__brand">DriveDocs</p>
+    <p class="boot__hint" id="boot-hint">載入中 · v260813s</p>
+  </div>
+
+  <div id="setup" class="setup hidden" hidden></div>
+
+  <div id="shell" class="shell hidden">
+    <header class="topbar">
+      <div class="topbar__brand">DriveDocs</div>
+      <div class="topbar__meta" id="drive-meta">楊以寧</div>
+      <button type="button" class="topbar__menu-btn" id="sidebar-toggle" aria-label="選單">☰</button>
+
+      <nav class="topbar__nav-desktop" aria-label="主選單">
+        <button type="button" class="menu__item is-active" data-page="dashboard">首頁</button>
+        <button type="button" class="menu__item" data-page="upload">上傳</button>
+        <button type="button" class="menu__item" data-page="customers">客戶</button>
+        <button type="button" class="menu__item" data-page="activities">活動</button>
+        <button type="button" class="menu__item" data-page="settings">設定</button>
+      </nav>
+
+      <div class="topbar__search">
+        <input type="search" id="global-search" placeholder="搜尋客戶…" autocomplete="off" enterkeyhint="search">
+      </div>
+
+      <div class="topbar__extras">
+        <a class="text-link" id="drive-link" href="https://drive.google.com" target="_blank" rel="noopener">雲端硬碟</a>
+        <span id="user-email" class="topbar__meta"></span>
+      </div>
+    </header>
+
+    <nav class="bottom-nav" aria-label="快捷">
+      <button type="button" class="menu__item is-active" data-page="dashboard"><span class="bn-ico">⌂</span>首頁</button>
+      <button type="button" class="menu__item" data-page="upload"><span class="bn-ico">↑</span>上傳</button>
+      <button type="button" class="menu__item" data-page="customers"><span class="bn-ico">人</span>客戶</button>
+      <button type="button" class="menu__item" data-page="activities"><span class="bn-ico">日</span>活動</button>
+      <button type="button" class="menu__item" data-page="settings"><span class="bn-ico">⚙</span>設定</button>
+    </nav>
+
+    <div id="sidebar-backdrop" class="mobile-drawer-backdrop hidden" hidden></div>
+    <aside id="sidebar" class="mobile-drawer hidden" hidden>
+      <div class="mobile-drawer__title">選單</div>
+      <button type="button" class="menu__item" data-page="settings">設定</button>
+      <a class="menu__item" id="drive-link-mobile" href="https://drive.google.com" target="_blank" rel="noopener">開啟雲端硬碟</a>
+      <button type="button" class="btn" id="btn-close-drawer" style="width:100%;margin-top:4px">關閉</button>
+    </aside>
+
+    <main class="main" id="content"></main>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="modal-root"></div>
+
+  <?!= include('App'); ?>
+</body>
+</html>
