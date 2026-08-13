@@ -616,19 +616,23 @@ function yearMonthWeekActivityName_(monday) {
   return y + '年' + month + '月第' + weekOfMonth + '週活動';
 }
 
+function activityYearRootName_() {
+  return (CONFIG && CONFIG.ACTIVITY_ROOT_NAME) || '千婷-上傳本週115年活動';
+}
+
 /**
- * 共用根：我的雲端硬碟／{年}／{N}月活動
+ * 共用根：我的雲端硬碟／千婷-上傳本週115年活動／{N}月活動
  */
 function ensureYearMonthActivityRoot_(period) {
   var monday = weekMondayFromPeriod_(period || currentWeekLabel_());
   var myDrive = DriveApp.getRootFolder();
-  var yearFolder = findOrCreateSubfolder_(myDrive, yearFolderName_(monday));
-  return findOrCreateSubfolder_(yearFolder, monthActivityBucketName_(monday));
+  var activityRoot = findOrCreateSubfolder_(myDrive, activityYearRootName_());
+  return findOrCreateSubfolder_(activityRoot, monthActivityBucketName_(monday));
 }
 
 /**
  * 本週活動：
- * 我的雲端硬碟／{年}／{N}月活動／{Y}年{M}月第W週活動
+ * 我的雲端硬碟／千婷-上傳本週115年活動／{N}月活動／{Y}年{M}月第W週活動
  */
 function ensureThisWeekActivityFolder_(period) {
   var monday = weekMondayFromPeriod_(period || currentWeekLabel_());
@@ -638,13 +642,13 @@ function ensureThisWeekActivityFolder_(period) {
 
 function activityDrivePathHint_(period) {
   var monday = weekMondayFromPeriod_(period || currentWeekLabel_());
-  return '我的雲端硬碟／' + yearFolderName_(monday) + '／' +
+  return '我的雲端硬碟／' + activityYearRootName_() + '／' +
     monthActivityBucketName_(monday) + '／' + yearMonthWeekActivityName_(monday);
 }
 
 /**
  * 本週講座：
- * 我的雲端硬碟／{年}／{N}月活動／本週講座／{日期}／{標題}
+ * 我的雲端硬碟／千婷-上傳本週115年活動／{N}月活動／本週講座／{日期}／{標題}
  */
 function ensureLectureDriveFolder_(period, title, docDate) {
   var monthRoot = ensureYearMonthActivityRoot_(period || currentWeekLabel_());
@@ -659,7 +663,7 @@ function lectureDrivePathHint_(period, title, docDate) {
   var monday = weekMondayFromPeriod_(period || currentWeekLabel_());
   var dateName = normalizeDocDate_(docDate);
   var titleName = String(title || '').trim() || '{標題}';
-  return '我的雲端硬碟／' + yearFolderName_(monday) + '／' +
+  return '我的雲端硬碟／' + activityYearRootName_() + '／' +
     monthActivityBucketName_(monday) + '／本週講座／' + dateName + '／' + titleName;
 }
 

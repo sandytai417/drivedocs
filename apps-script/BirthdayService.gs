@@ -180,6 +180,8 @@ function listBirthdaysFromCustomers_(customers) {
       name: c.name,
       phone: c.phone || '',
       email: c.email || '',
+      gender: c.gender || '',
+      address: c.address || '',
       birthday: c.birthday || '',
       birthdayDisplay: formatBirthdayDisplay_(c.birthday || ''),
       birthdayMd: parts.md,
@@ -251,6 +253,50 @@ function disableWeeklyBirthdayReminder_() {
   }
 }
 
+function birthdayFieldOrDash_(value) {
+  var v = String(value == null ? '' : value).trim();
+  return v || '未填';
+}
+
+function birthdayPersonTextBlock_(c, idx) {
+  var lines = [];
+  lines.push((idx + 1) + '.');
+  lines.push('姓名：' + birthdayFieldOrDash_(c.name));
+  lines.push('電話：' + birthdayFieldOrDash_(c.phone));
+  lines.push('郵箱：' + birthdayFieldOrDash_(c.email));
+  lines.push('性別：' + birthdayFieldOrDash_(c.gender));
+  lines.push('地址：' + birthdayFieldOrDash_(c.address));
+  lines.push('生日：' + birthdayFieldOrDash_(c.birthdayDisplay || formatBirthdayDisplay_(c.birthday || c.birthdayMd)));
+  if (c.weekdayLabel) lines.push('本週：' + c.weekdayLabel);
+  if (c.age != null) lines.push('年齡：滿 ' + c.age + ' 歲');
+  return lines.join('\n');
+}
+
+function birthdayPersonHtmlBlock_(c, idx) {
+  function row_(label, value) {
+    return '<tr><th style="text-align:left;padding:4px 12px 4px 0;color:#555;font-weight:600;white-space:nowrap">' +
+      label + '</th><td style="padding:4px 0">' +
+      birthdayFieldOrDash_(value).replace(/&/g, '&amp;').replace(/</g, '&lt;') +
+      '</td></tr>';
+  }
+  var birthday = c.birthdayDisplay || formatBirthdayDisplay_(c.birthday || c.birthdayMd);
+  var extra = '';
+  if (c.weekdayLabel) extra += row_('本週', c.weekdayLabel);
+  if (c.age != null) extra += row_('年齡', '滿 ' + c.age + ' 歲');
+  return '<div style="margin:0 0 16px;padding:12px 14px;border:1px solid #eee;border-radius:10px">' +
+    '<p style="margin:0 0 8px;font-weight:700">' + (idx + 1) + '. ' +
+    birthdayFieldOrDash_(c.name).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</p>' +
+    '<table style="border-collapse:collapse;font-size:14px">' +
+      row_('姓名', c.name) +
+      row_('電話', c.phone) +
+      row_('郵箱', c.email) +
+      row_('性別', c.gender) +
+      row_('地址', c.address) +
+      row_('生日', birthday) +
+      extra +
+    '</table></div>';
+}
+
 /**
  * 寄送本週壽星提醒（給自己）。可由觸發器或手動呼叫。
  * @param {{force?:boolean}} opt force=true 時即使本週無人也寄摘要
@@ -281,29 +327,29 @@ function sendWeeklyBirthdayReminder(opt) {
   lines.push('DriveDocs 本週壽星提醒');
   lines.push('週次：' + data.weekLabel);
   lines.push('');
+  var htmlParts = [];
+  htmlParts.push('<p style="margin:0 0 8px"><strong>DriveDocs 本週壽星提醒</strong></p>');
+  htmlParts.push('<p style="margin:0 0 16px;color:#555">週次：' + String(data.weekLabel || '') + '</p>');
   if (!data.count) {
     lines.push('本週沒有登記生日的客戶。');
+    htmlParts.push('<p>本週沒有登記生日的客戶。</p>');
   } else {
     lines.push('共 ' + data.count + ' 位：');
+    htmlParts.push('<p style="margin:0 0 12px">共 ' + data.count + ' 位：</p>');
     data.customers.forEach(function (c, idx) {
-      var age = c.age != null ? (' · 滿 ' + c.age + ' 歲') : '';
-      lines.push(
-        (idx + 1) + '. ' + c.name +
-        ' · ' + c.weekdayLabel +
-        ' · 生日 ' + formatBirthdayDisplay_(c.birthday || c.birthdayMd) +
-        age +
-        (c.phone ? (' · ' + c.phone) : '') +
-        (c.email ? (' · ' + c.email) : '')
-      );
+      lines.push(birthdayPersonTextBlock_(c, idx));
+      lines.push('');
+      htmlParts.push(birthdayPersonHtmlBlock_(c, idx));
     });
   }
-  lines.push('');
   lines.push('— DriveDocs · 楊以寧');
+  htmlParts.push('<p style="margin-top:16px;color:#888;font-size:12px">— DriveDocs · 楊以寧</p>');
 
   MailApp.sendEmail({
     to: email,
     subject: '【DriveDocs】本週壽星 ' + data.count + ' 位 · ' + data.weekLabel,
-    body: lines.join('\n')
+    body: lines.join('\n'),
+    htmlBody: htmlParts.join('')
   });
 
   return {

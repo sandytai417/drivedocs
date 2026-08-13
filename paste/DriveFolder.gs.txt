@@ -1,7 +1,7 @@
 /**
  * DriveDocs — Drive 資料夾層
- * 路徑：客戶資料／{注音}／{客戶姓名}／{民國日期}／檔案
- * 例：客戶資料／ㄉ／戴**／1150813
+ * 路徑：千婷-整理客戶資料／{注音}／{客戶姓名}／{民國日期}／檔案
+ * 例：千婷-整理客戶資料／ㄉ／戴**／1150813
  * 畫面只顯示「保單」一張卡；Drive 不建分類夾。
  */
 
@@ -13,21 +13,87 @@ function findOrCreateSubfolder_(parent, name) {
   return parent.createFolder(name);
 }
 
-function getRootFolder_() {
-  var id = getProp_(CONFIG.PROP_KEYS.ROOT_FOLDER_ID);
+function findUntrashedFolderByName_(name) {
+  name = String(name || '').trim();
+  if (!name) return null;
+  try {
+    var it = DriveApp.getFoldersByName(name);
+    while (it.hasNext()) {
+      var f = it.next();
+      try {
+        if (f && !f.isTrashed()) return f;
+      } catch (e) { /* skip */ }
+    }
+  } catch (e2) { /* ignore */ }
+  return null;
+}
+
+function rememberRootFolder_(folder) {
+  if (!folder) return folder;
+  try { setProp_(CONFIG.PROP_KEYS.ROOT_FOLDER_ID, folder.getId()); } catch (e) {}
+  return folder;
+}
+
+function wantedCustomerRootName_(useSettings) {
+  var wanted = (CONFIG && CONFIG.DEFAULT_ROOT_NAME) || '千婷-整理客戶資料';
+  var legacy = (CONFIG && CONFIG.LEGACY_ROOT_NAME) || '客戶資料';
+  if (useSettings) {
+    try {
+      var saved = String(getSetting('rootFolderName', wanted) || '').trim();
+      if (saved && saved !== legacy) wanted = saved;
+    } catch (e) { /* keep default */ }
+  }
+  return wanted;
+}
+
+function resolveCustomerRootFolder_(useSettings) {
+  var wanted = wantedCustomerRootName_(useSettings);
+  var legacy = (CONFIG && CONFIG.LEGACY_ROOT_NAME) || '客戶資料';
+
+  var named = findUntrashedFolderByName_(wanted);
+  if (named) {
+    try {
+      if (useSettings) {
+        var cur = String(getSetting('rootFolderName', '') || '').trim();
+        if (!cur || cur === legacy) setSetting('rootFolderName', wanted);
+      }
+    } catch (e0) {}
+    return rememberRootFolder_(named);
+  }
+
+  var id = '';
+  try { id = getProp_(CONFIG.PROP_KEYS.ROOT_FOLDER_ID) || ''; } catch (e1) { id = ''; }
   if (id) {
     try {
-      var f = DriveApp.getFolderById(id);
-      if (f && !f.isTrashed()) return f;
-    } catch (e) {
+      var existing = DriveApp.getFolderById(id);
+      if (existing && !existing.isTrashed()) {
+        try {
+          if (existing.getName() === legacy && wanted !== legacy) existing.setName(wanted);
+        } catch (e2) {}
+        try {
+          if (useSettings) setSetting('rootFolderName', wanted);
+        } catch (e3) {}
+        return existing;
+      }
+    } catch (e4) {
       try { setProp_(CONFIG.PROP_KEYS.ROOT_FOLDER_ID, ''); } catch (ignore) {}
     }
   }
-  var name = getSetting('rootFolderName', CONFIG.DEFAULT_ROOT_NAME) || CONFIG.DEFAULT_ROOT_NAME;
-  var folders = DriveApp.getFoldersByName(name);
-  var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(name);
-  setProp_(CONFIG.PROP_KEYS.ROOT_FOLDER_ID, folder.getId());
-  return folder;
+
+  var old = findUntrashedFolderByName_(legacy);
+  if (old && wanted !== legacy) {
+    try { old.setName(wanted); } catch (e5) {}
+    try { if (useSettings) setSetting('rootFolderName', wanted); } catch (e6) {}
+    return rememberRootFolder_(old);
+  }
+
+  var created = DriveApp.createFolder(wanted);
+  try { if (useSettings) setSetting('rootFolderName', wanted); } catch (e7) {}
+  return rememberRootFolder_(created);
+}
+
+function getRootFolder_() {
+  return resolveCustomerRootFolder_(true);
 }
 
 /** 客戶資料（不再多一層「客戶」） */
@@ -147,8 +213,8 @@ function looksLikeCustomerFolder_(folder) {
 }
 
 /**
- * 保證姓名夾在 客戶資料／{注音}／{姓名}。
- * 會把舊路徑 客戶／注音／姓名，以及誤放在 客戶資料／姓名 的夾搬進去。
+ * 保證姓名夾在 千婷-整理客戶資料／{注音}／{姓名}。
+ * 會把舊路徑 客戶／注音／姓名，以及誤放在根目錄／姓名 的夾搬進去。
  */
 function ensureFolderUnderZhuyin_(folderId, customerName, metadata) {
   customerName = String(customerName || '').trim();
@@ -180,8 +246,8 @@ function ensureFolderUnderZhuyin_(folderId, customerName, metadata) {
 }
 
 /**
- * 建立客戶資料夾：客戶資料／{注音}／{姓名}
- * 舊夾若在 客戶／注音／姓名 或 客戶資料／姓名，會搬到正確注音夾。
+ * 建立客戶資料夾：千婷-整理客戶資料／{注音}／{姓名}
+ * 舊夾若在 客戶／注音／姓名 或 根目錄／姓名，會搬到正確注音夾。
  */
 function createCustomerFolderTree(customerName, metadata) {
   customerName = String(customerName || '').trim();
@@ -568,7 +634,7 @@ function shouldMigrateNameFolder_(folder, name, knownNames) {
   return looksLikeCustomerFolder_(folder);
 }
 
-/** 把誤放在 客戶資料／姓名 或 客戶／… 的姓名夾搬進 客戶資料／注音／姓名 */
+/** 把誤放在 根目錄／姓名 或 客戶／… 的姓名夾搬進 千婷-整理客戶資料／注音／姓名 */
 function migrateCustomerFoldersIntoZhuyin_() {
   var root = getRootFolder_();
   var moved = 0;
@@ -654,7 +720,7 @@ function collectCustomerFoldersUnder_(parent, out) {
   }
 }
 
-/** 只收錄 客戶資料／{注音}／{姓名}（以及尚未搬移的舊路徑 客戶／注音／姓名） */
+/** 只收錄 千婷-整理客戶資料／{注音}／{姓名}（以及尚未搬移的舊路徑 客戶／注音／姓名） */
 function listCustomerFoldersFromDrive_(opt) {
   opt = opt || {};
   if (opt.migrate) {
@@ -667,6 +733,19 @@ function listCustomerFoldersFromDrive_(opt) {
     var oldIt = root.getFoldersByName('客戶');
     if (oldIt.hasNext()) collectCustomerFoldersUnder_(oldIt.next(), out);
   } catch (e) { /* ignore */ }
+  try {
+    var legacyName = (CONFIG && CONFIG.LEGACY_ROOT_NAME) || '客戶資料';
+    if (root && root.getName() !== legacyName) {
+      var oldRoot = findUntrashedFolderByName_(legacyName);
+      if (oldRoot && oldRoot.getId() !== root.getId()) {
+        collectCustomerFoldersUnder_(oldRoot, out);
+        try {
+          var oldBucket = oldRoot.getFoldersByName('客戶');
+          if (oldBucket.hasNext()) collectCustomerFoldersUnder_(oldBucket.next(), out);
+        } catch (eB) { /* ignore */ }
+      }
+    }
+  } catch (eL) { /* ignore */ }
   return out;
 }
 
@@ -766,7 +845,7 @@ function rewriteCustomersSheet_(objects) {
 }
 
 /**
- * 以 Drive 為準同步索引：掃描 客戶資料／{注音}／{姓名}（含舊路徑 客戶／注音／姓名）。
+ * 以 Drive 為準同步索引：掃描 千婷-整理客戶資料／{注音}／{姓名}（含舊路徑 客戶／注音／姓名）。
  * Drive 沒有的列從列表移除；Drive 有的夾才進入列表。
  * @param {{force?:boolean}} opt
  */

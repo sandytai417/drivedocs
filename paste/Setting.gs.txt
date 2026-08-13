@@ -41,7 +41,7 @@ function initializeWorkspace() {
       setSetting('categories', CONFIG.DEFAULT_CATEGORIES.slice());
     }
     if (!getSetting('rootFolderName', null)) {
-      setSetting('rootFolderName', CONFIG.DEFAULT_ROOT_NAME || '客戶資料');
+      setSetting('rootFolderName', CONFIG.DEFAULT_ROOT_NAME || '千婷-整理客戶資料');
     }
     if (!getSetting('namingRule', null)) {
       setSetting('namingRule', '{name}');
@@ -58,31 +58,11 @@ function initializeWorkspace() {
  * 初始化專用：只靠 CONFIG / Properties，不呼叫 getSetting
  */
 function ensureRootFolderForInit_() {
-  var id = '';
-  try { id = getProp_(CONFIG.PROP_KEYS.ROOT_FOLDER_ID) || ''; } catch (e) { id = ''; }
-
-  if (id) {
-    try {
-      var existing = DriveApp.getFolderById(id);
-      if (existing) return existing;
-    } catch (e) {
-      try { setProp_(CONFIG.PROP_KEYS.ROOT_FOLDER_ID, ''); } catch (ignore) {}
-    }
-  }
-
-  var name = '客戶資料';
   try {
-    if (CONFIG && CONFIG.DEFAULT_ROOT_NAME) name = String(CONFIG.DEFAULT_ROOT_NAME).trim() || name;
-  } catch (e) { /* keep default */ }
-
-  var folder = null;
-  try {
-    var it = DriveApp.getFoldersByName(name);
-    folder = it.hasNext() ? it.next() : DriveApp.createFolder(name);
+    return resolveCustomerRootFolder_(false);
   } catch (e) {
     throw new Error('無法存取 Google Drive（請重新授權 Drive）。詳情：' + (e.message || e));
   }
-  return folder || null;
 }
 
 function getAppState() {
@@ -122,7 +102,11 @@ function getAppState() {
     },
     settings: settings,
     supportedExt: (CONFIG && CONFIG.SUPPORTED_EXT) || [],
-    privateSingleUser: true
+    privateSingleUser: true,
+    paths: (CONFIG && CONFIG.DRIVE_PATHS) || {
+      CUSTOMERS: '我的雲端硬碟／千婷-整理客戶資料／{注音}／{客戶姓名}／{資料日期}',
+      ACTIVITIES: '我的雲端硬碟／千婷-上傳本週115年活動／{N}月活動／{Y}年{M}月第W週活動'
+    }
   };
 }
 
@@ -145,7 +129,13 @@ function getSettingsLite_() {
   var ssId = getProp_(CONFIG.PROP_KEYS.SPREADSHEET_ID) || '';
   var categories = getCategoryTemplate_();
   return {
-    rootFolderName: getSetting('rootFolderName', CONFIG.DEFAULT_ROOT_NAME),
+    rootFolderName: (function () {
+      var n = String(getSetting('rootFolderName', CONFIG.DEFAULT_ROOT_NAME) || '').trim();
+      var legacy = (CONFIG && CONFIG.LEGACY_ROOT_NAME) || '客戶資料';
+      var wanted = (CONFIG && CONFIG.DEFAULT_ROOT_NAME) || '千婷-整理客戶資料';
+      if (!n || n === legacy) return wanted;
+      return n;
+    })(),
     rootFolderId: rootId,
     rootFolderUrl: rootId ? ('https://drive.google.com/drive/folders/' + rootId) : '',
     categories: categories,
@@ -239,8 +229,8 @@ function bootWorkspace() {
     activityPathHint: '',
     appVersion: (CONFIG && CONFIG.APP_VERSION) || '',
     paths: (CONFIG && CONFIG.DRIVE_PATHS) || {
-      CUSTOMERS: '我的雲端硬碟／客戶資料／{注音}／{客戶姓名}／{資料日期}',
-      ACTIVITIES: '我的雲端硬碟／{年}／{N}月活動／{Y}年{M}月第W週活動'
+      CUSTOMERS: '我的雲端硬碟／千婷-整理客戶資料／{注音}／{客戶姓名}／{資料日期}',
+      ACTIVITIES: '我的雲端硬碟／千婷-上傳本週115年活動／{N}月活動／{Y}年{M}月第W週活動'
     }
   };
   try { payload.weekLabel = currentWeekLabel_(); } catch (e2) { /* keep empty */ }
