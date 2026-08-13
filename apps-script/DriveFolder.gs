@@ -35,29 +35,193 @@ function getCustomersBucketFolder_() {
   return getRootFolder_();
 }
 
-/**
- * 建立客戶資料夾：客戶資料／{注音}／{姓名}
- * 相容舊路徑：客戶資料／客戶／{注音}／{姓名}
- */
-function createCustomerFolderTree(customerName, metadata) {
-  var root = getRootFolder_();
-  var zhuyin = getZhuyinInitial(customerName);
-  var zhFolder = findOrCreateSubfolder_(root, zhuyin);
-  var existing = zhFolder.getFoldersByName(customerName);
-  var customerFolder = null;
-  if (existing.hasNext()) {
-    customerFolder = existing.next();
-  } else {
-    var oldBucketIt = root.getFoldersByName('客戶');
-    if (oldBucketIt.hasNext()) {
-      var oldZhIt = oldBucketIt.next().getFoldersByName(zhuyin);
-      if (oldZhIt.hasNext()) {
-        var oldCustIt = oldZhIt.next().getFoldersByName(customerName);
-        if (oldCustIt.hasNext()) customerFolder = oldCustIt.next();
+function resolveZhuyinKey_(customerName) {
+  var z = '';
+  try { z = String(getZhuyinInitial(customerName) || '').trim(); } catch (e) { z = ''; }
+  return z || '#';
+}
+
+function findNamedChildFolder_(parent, name) {
+  if (!parent) return null;
+  name = String(name || '').trim();
+  if (!name) return null;
+  try {
+    var it = parent.getFoldersByName(name);
+    while (it.hasNext()) {
+      var f = it.next();
+      try { if (!f.isTrashed()) return f; } catch (e) { continue; }
+    }
+  } catch (e2) { /* ignore */ }
+  return null;
+}
+
+function getImmediateParentFolder_(folder) {
+  try {
+    var it = folder.getParents();
+    if (it.hasNext()) return it.next();
+  } catch (e) { /* ignore */ }
+  return null;
+}
+
+/** 把 src 內檔案／子夾併進 dest（同名子夾遞迴合併） */
+function mergeFolderContents_(src, dest) {
+  if (!src || !dest || src.getId() === dest.getId()) return;
+  var fileIt = src.getFiles();
+  while (fileIt.hasNext()) {
+    var f = fileIt.next();
+    try { f.moveTo(dest); }
+    catch (e) {
+      try { dest.addFile(f); } catch (e2) { /* ignore */ }
+      try { src.removeFile(f); } catch (e3) { /* ignore */ }
+    }
+  }
+  var folderIt = src.getFolders();
+  var subs = [];
+  while (folderIt.hasNext()) subs.push(folderIt.next());
+  for (var i = 0; i < subs.length; i++) {
+    var sub = subs[i];
+    try { if (sub.isTrashed()) continue; } catch (e4) { continue; }
+    var clash = findNamedChildFolder_(dest, sub.getName());
+    if (clash && clash.getId() !== sub.getId()) {
+      mergeFolderContents_(sub, clash);
+      try { sub.setTrashed(true); } catch (e5) { /* ignore */ }
+    } else {
+      try { sub.moveTo(dest); }
+      catch (e6) {
+        try { dest.addFolder(sub); src.removeFolder(sub); } catch (e7) { /* ignore */ }
       }
     }
-    if (!customerFolder) customerFolder = zhFolder.createFolder(customerName);
   }
+}
+
+function moveFolderInto_(folder, destParent) {
+  if (!folder || !destParent) return folder;
+  if (folder.getId() === destParent.getId()) return folder;
+  var destId = destParent.getId();
+  var clash = findNamedChildFolder_(destParent, folder.getName());
+  if (clash && clash.getId() !== folder.getId()) {
+    mergeFolderContents_(folder, clash);
+    try { folder.setTrashed(true); } catch (e0) { /* ignore */ }
+    return clash;
+  }
+  var extras = [];
+  var already = false;
+  try {
+    var parents = folder.getParents();
+    while (parents.hasNext()) {
+      var p = parents.next();
+      if (p.getId() === destId) already = true;
+      else extras.push(p);
+    }
+  } catch (e1) { /* ignore */ }
+  if (!already) {
+    try { folder.moveTo(destParent); }
+    catch (e2) {
+      try { destParent.addFolder(folder); } catch (e3) { throw e2; }
+    }
+  }
+  for (var i = 0; i < extras.length; i++) {
+    try { extras[i].removeFolder(folder); } catch (ignore) {}
+  }
+  return folder;
+}
+
+function looksLikeCustomerFolder_(folder) {
+  if (!folder) return false;
+  var name = String(folder.getName() || '').trim();
+  if (!name || name === '客戶') return false;
+  if (isZhuyinKeyFolder_(name) || isDateFolderName_(name)) return false;
+  try {
+    if (folder.getFilesByName('metadata.json').hasNext()) return true;
+  } catch (e) { /* ignore */ }
+  try {
+    var subs = folder.getFolders();
+    while (subs.hasNext()) {
+      var sub = subs.next();
+      try {
+        if (!sub.isTrashed() && isDateFolderName_(sub.getName())) return true;
+      } catch (e2) { continue; }
+    }
+  } catch (e3) { /* ignore */ }
+  return false;
+}
+
+/**
+ * 保證姓名夾在 客戶資料／{注音}／{姓名}。
+ * 會把舊路徑 客戶／注音／姓名，以及誤放在 客戶資料／姓名 的夾搬進去。
+ */
+function ensureFolderUnderZhuyin_(folderId, customerName, metadata) {
+  customerName = String(customerName || '').trim();
+  if (!customerName) throw new Error('客戶姓名不可空白');
+  var folder = null;
+  if (folderId) {
+    try {
+      folder = DriveApp.getFolderById(String(folderId));
+      if (folder && folder.isTrashed()) folder = null;
+    } catch (e) { folder = null; }
+  }
+  var fname = folder ? String(folder.getName() || '').trim() : '';
+  if (folder && (isZhuyinKeyFolder_(fname) || fname === '客戶' || isDateFolderName_(fname))) {
+    folder = null;
+    fname = '';
+  }
+  if (!folder) return createCustomerFolderTree(customerName, metadata || { name: customerName });
+  if (fname !== customerName) {
+    try { folder.setName(customerName); } catch (e2) { /* keep */ }
+  }
+  var root = getRootFolder_();
+  var zhuyin = resolveZhuyinKey_(customerName);
+  var zhFolder = findOrCreateSubfolder_(root, zhuyin);
+  folder = moveFolderInto_(folder, zhFolder);
+  if (metadata) {
+    try { writeMetadata_(folder, metadata); } catch (e3) { /* ignore */ }
+  }
+  return { folderId: folder.getId(), zhuyin: zhuyin };
+}
+
+/**
+ * 建立客戶資料夾：客戶資料／{注音}／{姓名}
+ * 舊夾若在 客戶／注音／姓名 或 客戶資料／姓名，會搬到正確注音夾。
+ */
+function createCustomerFolderTree(customerName, metadata) {
+  customerName = String(customerName || '').trim();
+  if (!customerName) throw new Error('客戶姓名不可空白');
+  var root = getRootFolder_();
+  var zhuyin = resolveZhuyinKey_(customerName);
+  var zhFolder = findOrCreateSubfolder_(root, zhuyin);
+
+  var customerFolder = findNamedChildFolder_(zhFolder, customerName);
+  if (!customerFolder) {
+    var oldBucket = findNamedChildFolder_(root, '客戶');
+    if (oldBucket) {
+      var oldZh = findNamedChildFolder_(oldBucket, zhuyin);
+      if (oldZh) customerFolder = findNamedChildFolder_(oldZh, customerName);
+      if (!customerFolder) {
+        var inBucket = findNamedChildFolder_(oldBucket, customerName);
+        if (inBucket && !isZhuyinKeyFolder_(customerName) && !isDateFolderName_(customerName)) {
+          customerFolder = inBucket;
+        }
+      }
+    }
+  }
+  if (!customerFolder) {
+    var direct = findNamedChildFolder_(root, customerName);
+    if (direct && customerName !== '客戶' && !isZhuyinKeyFolder_(customerName) && !isDateFolderName_(customerName)) {
+      customerFolder = direct;
+    }
+  }
+  if (!customerFolder) {
+    var zhs = root.getFolders();
+    while (zhs.hasNext() && !customerFolder) {
+      var zf = zhs.next();
+      try { if (zf.isTrashed()) continue; } catch (eSkip) { continue; }
+      if (!isZhuyinKeyFolder_(zf.getName()) || zf.getId() === zhFolder.getId()) continue;
+      customerFolder = findNamedChildFolder_(zf, customerName);
+    }
+  }
+  if (!customerFolder) customerFolder = zhFolder.createFolder(customerName);
+  else customerFolder = moveFolderInto_(customerFolder, zhFolder);
+
   writeMetadata_(customerFolder, metadata || {});
   return {
     folderId: customerFolder.getId(),
@@ -80,27 +244,15 @@ function writeMetadata_(folder, metadata) {
 }
 
 function renameCustomerFolder(folderId, newName) {
-  var folder = DriveApp.getFolderById(folderId);
-  var oldName = folder.getName();
-  if (oldName === newName) return;
-
-  var newZh = getZhuyinInitial(newName);
-  var parents = folder.getParents();
-  var parent = parents.hasNext() ? parents.next() : null;
-  if (parent) {
-    var grandParents = parent.getParents();
-    var bucket = grandParents.hasNext() ? grandParents.next() : getRootFolder_();
-    var targetZh = findOrCreateSubfolder_(bucket, newZh);
-    if (targetZh.getId() !== parent.getId()) {
-      try {
-        folder.moveTo(targetZh);
-      } catch (e) {
-        targetZh.addFolder(folder);
-        try { parent.removeFolder(folder); } catch (ignore) {}
-      }
-    }
-  }
-  folder.setName(newName);
+  newName = String(newName || '').trim();
+  if (!newName) return folderId;
+  var tree = ensureFolderUnderZhuyin_(folderId, newName);
+  var id = (tree && tree.folderId) ? tree.folderId : folderId;
+  try {
+    var folder = DriveApp.getFolderById(String(id));
+    if (folder.getName() !== newName) folder.setName(newName);
+  } catch (e) { /* ignore */ }
+  return id;
 }
 
 function trashCustomerFolder(folderId) {
@@ -335,9 +487,73 @@ function requireLiveCustomerFolder_(tree, customerName) {
 
 function isZhuyinKeyFolder_(name) {
   name = String(name || '').trim();
-  if (!name || name === '#' || name === '客戶') return false;
+  if (!name || name === '客戶') return false;
   if (typeof ZHUYIN_ORDER !== 'undefined' && ZHUYIN_ORDER.indexOf(name) >= 0) return true;
-  return /^[ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙㄧㄨㄩㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ]$/.test(name);
+  return /^[ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙㄧㄨㄩㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ#]$/.test(name);
+}
+
+/** 把誤放在 客戶資料／姓名 或 客戶／… 的姓名夾搬進 客戶資料／注音／姓名 */
+function migrateCustomerFoldersIntoZhuyin_() {
+  var root = getRootFolder_();
+  var moved = 0;
+  var knownNames = {};
+  try {
+    var rows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
+    for (var r = 0; r < rows.length; r++) {
+      var nm = String(rows[r].name || '').trim();
+      if (nm) knownNames[nm] = true;
+    }
+  } catch (eSheet) { /* ignore */ }
+
+  function migrateOne_(folder) {
+    if (!folder) return;
+    var name = String(folder.getName() || '').trim();
+    if (!name) return;
+    var zhFolder = findOrCreateSubfolder_(root, resolveZhuyinKey_(name));
+    var parent = getImmediateParentFolder_(folder);
+    if (parent && parent.getId() === zhFolder.getId()) return;
+    moveFolderInto_(folder, zhFolder);
+    moved++;
+  }
+
+  function shouldMigrateNameFolder_(folder, name) {
+    if (knownNames[name]) return true;
+    return looksLikeCustomerFolder_(folder);
+  }
+
+  var oldBucket = findNamedChildFolder_(root, '客戶');
+  if (oldBucket) {
+    var bucketKids = [];
+    var bit = oldBucket.getFolders();
+    while (bit.hasNext()) bucketKids.push(bit.next());
+    for (var i = 0; i < bucketKids.length; i++) {
+      var child = bucketKids[i];
+      try { if (child.isTrashed()) continue; } catch (e) { continue; }
+      var cn = String(child.getName() || '');
+      if (isZhuyinKeyFolder_(cn)) {
+        var names = [];
+        var nit = child.getFolders();
+        while (nit.hasNext()) names.push(nit.next());
+        for (var n = 0; n < names.length; n++) {
+          try { if (!names[n].isTrashed()) migrateOne_(names[n]); } catch (e2) { /* ignore */ }
+        }
+      } else if (!isDateFolderName_(cn) && shouldMigrateNameFolder_(child, cn)) {
+        migrateOne_(child);
+      }
+    }
+  }
+
+  var rootKids = [];
+  var rit = root.getFolders();
+  while (rit.hasNext()) rootKids.push(rit.next());
+  for (var d = 0; d < rootKids.length; d++) {
+    var rk = rootKids[d];
+    try { if (rk.isTrashed()) continue; } catch (e3) { continue; }
+    var rn = String(rk.getName() || '');
+    if (rn === '客戶' || isZhuyinKeyFolder_(rn) || isDateFolderName_(rn)) continue;
+    if (shouldMigrateNameFolder_(rk, rn)) migrateOne_(rk);
+  }
+  return moved;
 }
 
 function collectCustomerFoldersUnder_(parent, out) {
@@ -367,8 +583,9 @@ function collectCustomerFoldersUnder_(parent, out) {
   }
 }
 
-/** 只收錄 客戶資料／{注音}／{姓名}（含舊路徑 客戶資料／客戶／{注音}／{姓名}） */
+/** 只收錄 客戶資料／{注音}／{姓名}（掃描前會把舊位置的姓名夾搬進注音夾） */
 function listCustomerFoldersFromDrive_() {
+  try { migrateCustomerFoldersIntoZhuyin_(); } catch (eMig) { /* keep listing */ }
   var out = [];
   var root = getRootFolder_();
   collectCustomerFoldersUnder_(root, out);

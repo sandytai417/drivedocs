@@ -379,7 +379,7 @@
   function appVersion_() {
     return (state.app && state.app.appVersion) ||
       (state.app && state.app.settings && state.app.settings.appVersion) ||
-      '260813y';
+      '260813z';
   }
 
   function todayLocalYmd_() {
@@ -2179,7 +2179,7 @@
     }
     var bdayOn = !!s.birthdayReminderEnabled;
     content.innerHTML =
-      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260813y') + '</p></section>' +
+      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260813z') + '</p></section>' +
       '<div class="stack"><section class="card"><div class="card__hd"><div><h2 class="card__title">雲端硬碟路徑</h2>' +
         '<p class="card__sub">客戶與本週活動分開存放</p></div></div><div class="card__bd">' +
         '<p class="upload-hint">客戶：' + escapeHtml(pathCustomers) + '</p>' +
@@ -2187,7 +2187,7 @@
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' +
           '<button type="button" class="btn" id="btn-sync-drive">立刻同步 Drive</button>' +
         '</div>' +
-        '<p class="upload-hint" id="sync-result" style="margin-top:8px">開啟網站與同步都會掃描雲端硬碟「客戶資料」資料夾。列表只顯示 Drive 裡實際存在的姓名夾；試算表只是索引。</p>' +
+        '<p class="upload-hint" id="sync-result" style="margin-top:8px">開啟與同步會把姓名夾搬進「客戶資料／注音／姓名」。若還停在「客戶」底下或直接放在客戶資料裡，會自動移入注音夾。</p>' +
       '</div></section>' +
       '<section class="card"><div class="card__bd">' +
         '<div class="field"><label>根目錄名稱</label><input id="s-root" value="' + escapeHtml(s.rootFolderName) + '"></div>' +
@@ -2324,16 +2324,16 @@
   function paintBootVersion_(extra) {
     var hint = $('boot-hint');
     if (!hint) return;
-    var ver = appVersion_() || '260813y';
+    var ver = appVersion_() || '260813z';
     hint.textContent = (extra || '載入中') + ' · v' + ver;
   }
 
   async function boot() {
     try {
-      try { console.log('[DriveDocs] boot · v260813y'); } catch (e) { /* ignore */ }
+      try { console.log('[DriveDocs] boot · v260813z'); } catch (e) { /* ignore */ }
       // 立刻顯示介面（不等伺服器）
       state.app = {
-        appVersion: '260813y',
+        appVersion: '260813z',
         user: { name: '楊以寧', display: '楊以寧', role: '', email: '' },
         settings: { rootFolderName: '客戶資料', categories: DEFAULT_CATEGORIES_CLIENT_.slice() },
         initialized: true
@@ -2398,7 +2398,7 @@
         animateBars(content);
       }).catch(function (e2) {
         $('content').innerHTML = '<div class="card card__bd"><p>' + escapeHtml((err && err.message) || e2.message || e2) +
-          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260813y。</p></div>';
+          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260813z。</p></div>';
       });
     });
     return p;

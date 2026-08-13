@@ -205,6 +205,37 @@ function pickCustomerName_(data) {
   return '';
 }
 
+function relocateIndexedCustomer_(customer) {
+  if (!customer || !customer.name) return customer;
+  var tree = ensureFolderUnderZhuyin_(customer.folderId, customer.name, {
+    id: customer.id,
+    name: customer.name
+  });
+  if (!tree || !tree.folderId) return customer;
+  var changed = String(tree.folderId) !== String(customer.folderId || '') ||
+    String(tree.zhuyin || '') !== String(customer.zhuyin || '');
+  customer.folderId = tree.folderId;
+  customer.zhuyin = tree.zhuyin || customer.zhuyin || '';
+  if (changed && customer.id) {
+    try {
+      updateObjectById_(CONFIG.SHEETS.CUSTOMERS, customer.id, {
+        folderId: tree.folderId,
+        zhuyin: customer.zhuyin,
+        updatedAt: nowIso_()
+      });
+    } catch (e) { /* keep in-memory */ }
+  }
+  try {
+    var live = sharedGetJson_('liveFolderIds_v1');
+    if (live && live.ids && live.ids.length) {
+      var ids = live.ids.slice();
+      if (ids.indexOf(String(tree.folderId)) === -1) ids.push(String(tree.folderId));
+      cacheLiveFolderIds_(ids);
+    }
+  } catch (eLive) { /* ignore */ }
+  return customer;
+}
+
 /**
  * 依 id 或姓名取得客戶；沒有就建立。UI 不必再分「既有／新增」模式。
  */
@@ -215,7 +246,7 @@ function ensureCustomer(data) {
   var id = data.id || data.customerId || '';
   if (id) {
     try {
-      return getCustomer(String(id)).customer;
+      return relocateIndexedCustomer_(getCustomer(String(id)).customer);
     } catch (e) {
       // id 無效時改走姓名
     }
@@ -229,7 +260,7 @@ function ensureCustomer(data) {
   var rows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
   for (var i = 0; i < rows.length; i++) {
     if (String(rows[i].name) === name) {
-      return customerFromRow_(rows[i]);
+      return relocateIndexedCustomer_(customerFromRow_(rows[i]));
     }
   }
   return createCustomer(data);
@@ -250,7 +281,7 @@ function createCustomer(data) {
     if (String(existing[i].name) === name) {
       var existingFid = String(existing[i].folderId || '').trim();
       if (existingFid && folderExists_(existingFid)) {
-        return customerFromRow_(existing[i]);
+        return relocateIndexedCustomer_(customerFromRow_(existing[i]));
       }
       var rebuilt = requireLiveCustomerFolder_(
         createCustomerFolderTree(name, { id: String(existing[i].id), name: name }),
@@ -311,7 +342,7 @@ function createCustomer(data) {
     completion: 0,
     status: 'not_started',
     fileCount: 0,
-    zhuyin: getZhuyinInitial(name)
+    zhuyin: tree.zhuyin || getZhuyinInitial(name)
   };
   appendObject_(CONFIG.SHEETS.CUSTOMERS, row);
   logActivity_(id, name, 'create_customer', '新增客戶 · ' + name);
@@ -328,7 +359,10 @@ function updateCustomer(id, data) {
   if (data.name !== undefined) {
     var newName = String(data.name).trim();
     if (!newName) throw new Error('請輸入客戶姓名');
-    if (newName !== c.name && c.folderId) renameCustomerFolder(c.folderId, newName);
+    if (newName !== c.name && c.folderId) {
+      var relocatedId = renameCustomerFolder(c.folderId, newName);
+      if (relocatedId) patch.folderId = relocatedId;
+    }
     patch.name = newName;
     patch.zhuyin = getZhuyinInitial(newName);
   }
