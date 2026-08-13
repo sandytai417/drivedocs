@@ -55,17 +55,16 @@ python3 -m http.server 8080
 
 ## 正式版（Apps Script）
 
-見 [`apps-script/`](apps-script/)：
+見 [`apps-script/`](apps-script/)：客戶路徑為 `千婷-整理客戶資料／{注音}／{姓名}／{民國日期}`（例如 `ㄉ／戴**／1150813`），畫面只顯示「保單」。
 
 ```bash
 cd apps-script
 npm install
 npx clasp login
-npx clasp create --title "DriveDocs" --type webapp --rootDir .
 npx clasp push
 ```
 
-部署為網頁應用程式後，文件會直寫 Google Drive。
+部署為網頁應用程式後，文件會直寫 Google Drive。版本：`v260814f`。
 
 ---
 

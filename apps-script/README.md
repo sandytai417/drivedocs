@@ -1,16 +1,30 @@
 # DriveDocs — Google Apps Script（正式版）
 
-此目錄為接 Google Drive / Sheets 的 Web App 原始碼。
+此目錄為接 Google Drive / Sheets 的 Web App 原始碼（`.gs` / `.html`）。
 
-GitHub Pages 靜態 Demo 在 repo 根目錄；要真實寫入 Drive 請用 clasp 部署本目錄。
+## 核心規則
 
-```bash
-npm install
-npx clasp login
-npx clasp create --title "DriveDocs" --type webapp --rootDir .
-# 或複製 .clasp.json.example → .clasp.json
-npx clasp push
-npx clasp open
-```
+- **Google Drive is the database.** 網站只做介面與索引。
+- **客戶上傳路徑**：`我的雲端硬碟／千婷-整理客戶資料／{注音}／{姓名}／{民國日期}`  
+  例：`千婷-整理客戶資料／ㄉ／戴**／1150813`
+- **本週活動路徑**：`我的雲端硬碟／千婷-上傳本週115年活動／{N}月活動／{Y}年{M}月第W週活動`
+- **畫面只留「保單」一張卡**，沒有基本資料／理賠等分類卡；Drive 不建分類夾。
+- **Drive 是資料庫**：開啟與同步都會掃描 `千婷-整理客戶資料／注音／姓名`。列表只顯示 Drive 裡實際存在的資料夾。
+- **Drive 刪夾會同步網站**：設定「立刻同步 Drive」。
 
-然後在 Apps Script：**部署 → 新增部署 → 網頁應用程式**。
+## 載入加速
+
+- 啟動一次 `api_boot`，本機／伺服器快取首頁
+- 客戶詳情點「保單」才載檔
+- 批次上傳重用同一日期資料夾
+
+## 上傳讀檔
+
+- **從雲端硬碟選取**最快：伺服器直接搬檔，瀏覽器不必讀本機。
+- 本機 JPEG／PNG／WebP（以及瀏覽器能解的 HEIC）大於約 450KB 會先縮成最長邊 1920 的 JPEG，再編碼上傳。
+- PDF／Word 等維持原檔；請盡量用雲端選取，避免手機讀大檔。
+- 本機檔採約 8MB 一批，讀下一批與上傳重疊。
+
+- 開啟／同步會把誤放在「客戶」或根目錄／姓名的夾搬進對應注音夾。
+
+版本標記：`v260814f`
