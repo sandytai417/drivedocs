@@ -3,37 +3,205 @@
   'use strict';
 
   var state = {
-    app: null,
     page: 'dashboard',
-    sortBy: 'zhuyin',
+    app: null,
     customerId: null,
-    searchTimer: null,
-    sidebarOpen: false
+    detailTab: 'folders',
+    openFolder: null,
+    zhuyinFilter: 'all',
+    listQuery: '',
+    uploadCustomerId: null,
+    uploadCategory: '',
+    uploadQueue: [],
+    searchQuery: '',
+    weekLabel: '',
+    monthLabel: '',
+    activityWeek: '',
+    uploadTarget: 'activity',
+    uploadDocDate: '',
+    cache: {
+      customers: null,
+      customersAt: 0,
+      weekOptions: null,
+      weekOptionsAt: 0,
+      home: null,
+      homeAt: 0,
+      activities: null,
+      activitiesAt: 0
+    },
+    uploadProgress: null
   };
 
-  var TITLES = {
-    dashboard: 'Dashboard',
-    customers: 'Customers',
-    upload: 'Upload',
-    reports: 'Reports',
-    settings: 'Settings',
-    detail: '客戶詳情',
-    search: '搜尋結果'
-  };
+  var CACHE_TTL_MS = 600000; // 10 分鐘記憶體快取
+  var BOOT_STORE_KEY = 'drivedocs_boot_v6';
+  var BOOT_STORE_TTL_MS = 1800000; // 30 分鐘本地快取
+  var renderSeq_ = 0;
+
+  function cacheFresh_(at, ttl) {
+    ttl = ttl == null ? CACHE_TTL_MS : ttl;
+    return at && (Date.now() - at) < ttl;
+  }
+
+  function invalidateClientCache_() {
+    state.cache.customers = null;
+    state.cache.customersAt = 0;
+    state.cache.home = null;
+    state.cache.homeAt = 0;
+    state.cache.weekOptions = null;
+    state.cache.weekOptionsAt = 0;
+    state.cache.activities = null;
+    state.cache.activitiesAt = 0;
+    try { sessionStorage.removeItem(BOOT_STORE_KEY); } catch (e) { /* ignore */ }
+    try { localStorage.removeItem(BOOT_STORE_KEY); } catch (e2) { /* ignore */ }
+  }
+
+  function rememberHome_(home) {
+    if (!home) return;
+    state.cache.home = home;
+    state.cache.homeAt = Date.now();
+    if (home.customers) {
+      state.cache.customers = home.customers;
+      state.cache.customersAt = Date.now();
+    }
+  }
+
+  function readBootStore_() {
+    function parseRaw_(raw) {
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || !parsed.at || (Date.now() - parsed.at) > BOOT_STORE_TTL_MS) return null;
+      return parsed;
+    }
+    try {
+      var hit = parseRaw_(sessionStorage.getItem(BOOT_STORE_KEY));
+      if (hit) return hit;
+    } catch (e) { /* ignore */ }
+    try {
+      return parseRaw_(localStorage.getItem(BOOT_STORE_KEY));
+    } catch (e2) { return null; }
+  }
+
+  function writeBootStore_(payload) {
+    var blob = JSON.stringify({
+      at: Date.now(),
+      app: payload.app,
+      home: payload.home,
+      activities: payload.activities || null,
+      weekLabel: payload.weekLabel,
+      activityPathHint: payload.activityPathHint,
+      paths: payload.paths,
+      appVersion: payload.appVersion || (payload.app && payload.app.appVersion) || ''
+    });
+    try { sessionStorage.setItem(BOOT_STORE_KEY, blob); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(BOOT_STORE_KEY, blob); } catch (e2) { /* quota */ }
+  }
+
+  async function getCustomersCached_() {
+    if (cacheFresh_(state.cache.customersAt) && state.cache.customers) {
+      return state.cache.customers;
+    }
+    if (cacheFresh_(state.cache.homeAt) && state.cache.home && state.cache.home.customers) {
+      state.cache.customers = state.cache.home.customers;
+      state.cache.customersAt = Date.now();
+      return state.cache.customers;
+    }
+    var list = await run('api_listCustomers', 'zhuyin');
+    state.cache.customers = list;
+    state.cache.customersAt = Date.now();
+    return list;
+  }
+
+  async function getHomeCached_(force) {
+    if (!force && cacheFresh_(state.cache.homeAt) && state.cache.home) {
+      return state.cache.home;
+    }
+    var home = await run('api_getHome');
+    rememberHome_(home);
+    return home;
+  }
+
+  /** 前端自算週次（免打伺服器） */
+  function listWeekOptionsClient_(weeksBack) {
+    weeksBack = weeksBack == null ? 16 : weeksBack;
+    var now = new Date();
+    var ymd = taipeiYmdParts_(now);
+    var local = new Date(ymd.y, ymd.m - 1, ymd.d);
+    var isoDow = taipeiIsoDow_(now);
+    var thisMonday = new Date(local);
+    thisMonday.setDate(local.getDate() - (isoDow - 1));
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    var fmt = function (x) {
+      return x.getFullYear() + '/' + pad(x.getMonth() + 1) + '/' + pad(x.getDate());
+    };
+    var out = [];
+    for (var w = 0; w <= weeksBack; w++) {
+      var monday = new Date(thisMonday);
+      monday.setDate(thisMonday.getDate() - w * 7);
+      var sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      var value = fmt(monday) + ' – ' + fmt(sunday);
+      var tag = w === 0 ? '（本週）' : (w === 1 ? '（上週）' : ('（' + w + ' 週前）'));
+      out.push({ value: value, label: value + ' ' + tag, offset: w, isCurrent: w === 0 });
+    }
+    return out;
+  }
+
+  function taipeiYmdParts_(date) {
+    try {
+      var parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'
+      }).formatToParts(date);
+      var map = {};
+      parts.forEach(function (p) { map[p.type] = p.value; });
+      return { y: Number(map.year), m: Number(map.month), d: Number(map.day) };
+    } catch (e) {
+      return { y: date.getFullYear(), m: date.getMonth() + 1, d: date.getDate() };
+    }
+  }
+
+  function taipeiIsoDow_(date) {
+    try {
+      var wd = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Taipei', weekday: 'short' }).format(date);
+      var map = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+      return map[wd] || 1;
+    } catch (e) {
+      var js = date.getDay();
+      return js === 0 ? 7 : js;
+    }
+  }
+
+  function mondayFromPeriodClient_(period) {
+    var s = String(period || '').trim();
+    var m = s.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    var ymd = taipeiYmdParts_(new Date());
+    var local = new Date(ymd.y, ymd.m - 1, ymd.d);
+    var iso = taipeiIsoDow_(new Date());
+    local.setDate(local.getDate() - (iso - 1));
+    return local;
+  }
+
+  /** 我的雲端硬碟／{年}／{N}月活動／{Y}年{M}月第W週活動 */
+  function activityDrivePathHintClient_(period) {
+    var mon = mondayFromPeriodClient_(period);
+    var year = mon.getFullYear();
+    var month = mon.getMonth() + 1;
+    var weekOfMonth = Math.ceil(mon.getDate() / 7);
+    return '我的雲端硬碟／' + year + '年／' + month + '月活動／' +
+      year + '年' + month + '月第' + weekOfMonth + '週活動';
+  }
+
+  async function getWeekOptionsCached_() {
+    if (cacheFresh_(state.cache.weekOptionsAt) && state.cache.weekOptions) {
+      return state.cache.weekOptions;
+    }
+    var opts = listWeekOptionsClient_(16);
+    state.cache.weekOptions = opts;
+    state.cache.weekOptionsAt = Date.now();
+    return opts;
+  }
 
   function $(id) { return document.getElementById(id); }
-
-  function run(fnName, args) {
-    args = args || [];
-    return new Promise(function (resolve, reject) {
-      var runner = google.script.run
-        .withSuccessHandler(resolve)
-        .withFailureHandler(function (err) {
-          reject(err);
-        });
-      runner[fnName].apply(runner, args);
-    });
-  }
 
   function toast(msg, isError) {
     var el = document.createElement('div');
@@ -43,649 +211,2143 @@
     setTimeout(function () { el.remove(); }, 3200);
   }
 
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   function formatDate(iso) {
     if (!iso) return '—';
     var s = String(iso);
-    if (s.length >= 10) return s.slice(0, 10).replace(/-/g, '/');
-    return s;
+    return s.length >= 16 ? s.slice(0, 16).replace('T', ' ').replace(/-/g, '/') : s.slice(0, 10).replace(/-/g, '/');
   }
 
-  function escapeHtml(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+  function formatSize(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return Math.round(n / 1024) + ' KB';
+    return (n / (1024 * 1024)).toFixed(2) + ' MB';
   }
 
-  function setPage(page, opts) {
-    opts = opts || {};
-    state.page = page;
-    if (opts.customerId) state.customerId = opts.customerId;
-    document.querySelectorAll('.nav__item').forEach(function (btn) {
-      btn.classList.toggle('is-active', btn.getAttribute('data-page') === page);
-    });
-    $('page-title').textContent = opts.title || TITLES[page] || page;
-    closeSidebar();
-    render();
-  }
-
-  function closeSidebar() {
-    state.sidebarOpen = false;
-    $('sidebar').classList.remove('is-open');
-  }
-
-  function openModal(html) {
-    var root = $('modal-root');
-    root.innerHTML = '<div class="modal-backdrop" id="modal-backdrop"><div class="modal">' + html + '</div></div>';
-    $('modal-backdrop').addEventListener('click', function (e) {
-      if (e.target.id === 'modal-backdrop') root.innerHTML = '';
-    });
-  }
-
-  function closeModal() { $('modal-root').innerHTML = ''; }
-
-  /* ---------- Render pages ---------- */
-
-  function render() {
-    var content = $('content');
-    content.classList.add('is-switching');
-    var actions = $('topbar-actions');
-    actions.innerHTML = '';
-
-    var p = Promise.resolve();
-    if (state.page === 'dashboard') p = renderDashboard(content, actions);
-    else if (state.page === 'customers') p = renderCustomers(content, actions);
-    else if (state.page === 'detail') p = renderDetail(content, actions);
-    else if (state.page === 'upload') p = renderUpload(content, actions);
-    else if (state.page === 'reports') p = renderReports(content, actions);
-    else if (state.page === 'settings') p = renderSettings(content, actions);
-    else if (state.page === 'search') p = renderSearch(content, actions);
-    else content.innerHTML = '<p>未知頁面</p>';
-
-    p.then(function () {
-      content.classList.remove('is-switching');
-      // animate completion bars
-      requestAnimationFrame(function () {
-        content.querySelectorAll('[data-width]').forEach(function (el) {
-          el.style.width = el.getAttribute('data-width') + '%';
+  function run(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve, reject) {
+      var runner = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(function (err) {
+          reject(err && err.message ? err : new Error(String(err)));
         });
-      });
-    }).catch(function (err) {
-      content.classList.remove('is-switching');
-      content.innerHTML = '<div class="panel"><p>' + escapeHtml(err.message || err) + '</p></div>';
-      toast(err.message || String(err), true);
+      // 必須綁定 runner 為 this，否則部分環境會丟掉參數
+      runner[fn].apply(runner, args);
     });
   }
 
-  function renderDashboard(content, actions) {
-    actions.innerHTML =
-      '<button type="button" class="btn btn--primary" id="btn-new-customer">新增客戶</button>';
-    content.innerHTML = '<p class="empty">載入 Dashboard…</p>';
-    return run('api_getDashboard').then(function (d) {
-      content.innerHTML =
-        '<section class="hero-strip">' +
-          '<p class="hero-strip__brand">DriveDocs</p>' +
-          '<p class="hero-strip__lead">Organize Client Documents Directly in Google Drive. 客戶資料夾與文件都在 Drive，這裡只負責流程與完成度。</p>' +
-        '</section>' +
-        '<div class="stat-grid">' +
-          stat('總客戶數', d.totalCustomers, '') +
-          stat('今日新增', d.todayNew, '') +
-          stat('今日整理', d.todayOrganized, '上傳／歸檔次數') +
-          stat('待整理', d.pending, '完成度未滿 100%') +
-          stat('文件完成率', d.completionRate + '%', '全體平均') +
-          stat('最近更新', d.recentUpdates, '今日異動') +
-        '</div>' +
-        '<section class="panel">' +
-          '<h2 class="panel__title">Recent Activity</h2>' +
-          renderActivity(d.activity || []) +
-        '</section>';
-      $('btn-new-customer').onclick = showCreateCustomerModal;
-      content.querySelectorAll('[data-customer-id]').forEach(function (el) {
-        el.addEventListener('click', function () {
-          setPage('detail', { customerId: el.getAttribute('data-customer-id'), title: el.getAttribute('data-name') });
-        });
-      });
-    });
-  }
-
-  function stat(label, value, hint) {
-    return '<article class="stat">' +
-      '<p class="stat__label">' + escapeHtml(label) + '</p>' +
-      '<p class="stat__value">' + escapeHtml(String(value)) + '</p>' +
-      (hint ? '<p class="stat__hint">' + escapeHtml(hint) + '</p>' : '') +
-      '</article>';
-  }
-
-  function renderActivity(items) {
-    if (!items.length) return '<p class="empty">尚無活動紀錄</p>';
-    return '<ul class="activity">' + items.map(function (a) {
-      return '<li class="activity__item" data-customer-id="' + escapeHtml(a.customerId) + '" data-name="' + escapeHtml(a.customerName) + '" style="cursor:pointer">' +
-        '<span class="activity__check">✔</span>' +
-        '<div><p class="activity__name">' + escapeHtml(a.customerName || '—') + '</p>' +
-        '<p class="activity__detail">' + escapeHtml(a.detail) + '</p></div>' +
-        '<span class="activity__time">' + escapeHtml(a.time || '') + '</span>' +
-        '</li>';
-    }).join('') + '</ul>';
-  }
-
-  function renderCustomers(content, actions) {
-    actions.innerHTML =
-      '<button type="button" class="btn btn--primary" id="btn-new-customer">新增客戶</button>';
-    content.innerHTML = '<p class="empty">載入客戶列表…</p>';
-    return run('api_listCustomers', [state.sortBy]).then(function (data) {
-      var sort = data.sortBy || 'zhuyin';
-      var toolbar =
-        '<div class="toolbar">' +
-          '<div class="seg" id="sort-seg">' +
-            segBtn('zhuyin', '注音', sort) +
-            segBtn('updated', '最近更新', sort) +
-            segBtn('created', '建立日期', sort) +
-            segBtn('completion', '完成度', sort) +
-          '</div>' +
-          '<span style="color:var(--muted);font-size:0.88rem">共 ' + data.customers.length + ' 位客戶</span>' +
-        '</div>';
-
-      var body;
-      if (!data.customers.length) {
-        body = '<div class="panel"><p class="empty">尚未建立客戶。點「新增客戶」或到 Settings 匯入示範資料。</p></div>';
-      } else if (sort === 'zhuyin' && data.groups) {
-        body = '<div class="explorer">' + data.groups.map(function (g) {
-          return '<div class="zhuyin-group">' +
-            '<div class="zhuyin-group__head"><span>' + escapeHtml(g.initial) + '</span><span class="zhuyin-group__rule"></span></div>' +
-            g.customers.map(folderRow).join('') +
-            '</div>';
-        }).join('') + '</div>';
-      } else {
-        body = '<div class="explorer">' + data.customers.map(folderRow).join('') + '</div>';
-      }
-
-      content.innerHTML = toolbar + body;
-      $('btn-new-customer').onclick = showCreateCustomerModal;
-      $('sort-seg').onclick = function (e) {
-        var btn = e.target.closest('button[data-sort]');
-        if (!btn) return;
-        state.sortBy = btn.getAttribute('data-sort');
-        renderCustomers(content, actions);
-      };
-      content.querySelectorAll('.folder-row').forEach(function (row) {
-        row.addEventListener('click', function () {
-          setPage('detail', {
-            customerId: row.getAttribute('data-id'),
-            title: row.getAttribute('data-name')
-          });
-        });
-      });
-    });
-  }
-
-  function segBtn(value, label, current) {
-    return '<button type="button" data-sort="' + value + '" class="' + (current === value ? 'is-active' : '') + '">' + label + '</button>';
-  }
-
-  function folderRow(c) {
-    return '<button type="button" class="folder-row" data-id="' + escapeHtml(c.id) + '" data-name="' + escapeHtml(c.name) + '">' +
-      '<span class="folder-icon" aria-hidden="true"></span>' +
-      '<span><p class="folder-row__name">' + escapeHtml(c.name) + '</p>' +
-      '<p class="folder-row__meta">' + escapeHtml(c.phone || '無電話') + ' · 更新 ' + escapeHtml(formatDate(c.updatedAt)) + '</p></span>' +
-      '<span class="completion">' +
-        '<div class="completion__bar"><div class="completion__fill" data-width="' + (c.completion || 0) + '"></div></div>' +
-        '<div class="completion__pct">' + (c.completion || 0) + '%</div>' +
-      '</span></button>';
-  }
-
-  function renderDetail(content, actions) {
-    content.innerHTML = '<p class="empty">載入客戶…</p>';
-    return run('api_getCustomer', [state.customerId]).then(function (data) {
-      var c = data.customer;
-      var comp = data.completion;
-      $('page-title').textContent = c.name;
-      actions.innerHTML =
-        '<button type="button" class="btn btn--ghost" id="btn-back">← 客戶列表</button>' +
-        '<button type="button" class="btn" id="btn-save">儲存</button>' +
-        '<button type="button" class="btn btn--danger" id="btn-del">刪除</button>';
-
-      var checklist = (comp.checklist || []).map(function (item) {
-        return '<div class="checklist__item">' +
-          '<span class="' + (item.done ? 'ok' : 'no') + '">' + (item.done ? '✔' : '✘') + '</span>' +
-          '<span>' + escapeHtml(item.category) + '</span></div>';
-      }).join('');
-
-      var cats = (data.categories || []).map(function (cat) {
-        var files = (data.filesByCategory && data.filesByCategory[cat]) || [];
-        var list = files.length
-          ? '<ul class="file-list">' + files.map(function (f) {
-              return '<li class="file-row">' +
-                '<div><p class="file-row__name">' + escapeHtml(f.name) + '</p>' +
-                '<p class="file-row__meta">' + escapeHtml(formatDate(f.updatedAt)) + '</p></div>' +
-                '<div class="file-actions">' +
-                  '<a class="btn btn--ghost" href="' + escapeHtml(f.previewUrl) + '" target="_blank" rel="noopener">預覽</a>' +
-                  '<a class="btn btn--ghost" href="' + escapeHtml(f.url) + '" target="_blank" rel="noopener">Drive</a>' +
-                  '<button type="button" class="btn btn--danger btn-del-file" data-file-id="' + escapeHtml(f.id) + '" data-file-name="' + escapeHtml(f.name) + '">刪除</button>' +
-                '</div></li>';
-            }).join('') + '</ul>'
-          : '<p class="empty">尚無文件</p>';
-        return '<section class="cat-block">' +
-          '<div class="cat-block__head"><span>' + escapeHtml(cat) + '</span>' +
-          '<button type="button" class="btn btn--ghost btn-upload-here" data-cat="' + escapeHtml(cat) + '">上傳</button></div>' +
-          list + '</section>';
-      }).join('');
-
-      content.innerHTML =
-        '<div class="detail">' +
-          '<aside class="panel detail__side">' +
-            '<div class="avatar">' + escapeHtml((c.name || '?').charAt(0)) + '</div>' +
-            '<div class="field"><label>姓名</label><input id="c-name" value="' + escapeHtml(c.name) + '"></div>' +
-            '<div class="field"><label>電話</label><input id="c-phone" value="' + escapeHtml(c.phone) + '"></div>' +
-            '<div class="field"><label>Email</label><input id="c-email" value="' + escapeHtml(c.email) + '"></div>' +
-            '<div class="field"><label>標籤（逗號分隔）</label><input id="c-tags" value="' + escapeHtml((c.tags || []).join(', ')) + '"></div>' +
-            '<div class="field"><label>備註</label><textarea id="c-notes">' + escapeHtml(c.notes) + '</textarea></div>' +
-            '<div class="completion" style="text-align:left;min-width:0">' +
-              '<div class="completion__bar"><div class="completion__fill" data-width="' + comp.percent + '"></div></div>' +
-              '<div class="completion__pct">完成度 ' + comp.percent + '%（' + comp.filled + '/' + comp.total + '）</div>' +
-            '</div>' +
-            '<div class="checklist">' + checklist + '</div>' +
-          '</aside>' +
-          '<div>' + cats + '</div>' +
-        '</div>';
-
-      $('btn-back').onclick = function () { setPage('customers'); };
-      $('btn-save').onclick = function () {
-        var tags = $('c-tags').value.split(/[,，]/).map(function (t) { return t.trim(); }).filter(Boolean);
-        run('api_updateCustomer', [c.id, {
-          name: $('c-name').value,
-          phone: $('c-phone').value,
-          email: $('c-email').value,
-          tags: tags,
-          notes: $('c-notes').value
-        }]).then(function () {
-          toast('已儲存');
-          renderDetail(content, actions);
-        }).catch(function (err) { toast(err.message || err, true); });
-      };
-      $('btn-del').onclick = function () {
-        if (!confirm('確定刪除客戶「' + c.name + '」？Drive 資料夾也會移至垃圾桶。')) return;
-        run('api_deleteCustomer', [c.id]).then(function () {
-          toast('已刪除');
-          setPage('customers');
-        }).catch(function (err) { toast(err.message || err, true); });
-      };
-      content.querySelectorAll('.btn-upload-here').forEach(function (btn) {
-        btn.onclick = function () {
-          state.uploadPreset = { customerId: c.id, category: btn.getAttribute('data-cat') };
-          setPage('upload');
-        };
-      });
-      content.querySelectorAll('.btn-del-file').forEach(function (btn) {
-        btn.onclick = function () {
-          if (!confirm('刪除此文件？')) return;
-          run('api_deleteDocument', [{
-            customerId: c.id,
-            fileId: btn.getAttribute('data-file-id'),
-            fileName: btn.getAttribute('data-file-name')
-          }]).then(function () {
-            toast('已刪除文件');
-            renderDetail(content, actions);
-          }).catch(function (err) { toast(err.message || err, true); });
-        };
-      });
-    });
-  }
-
-  function renderUpload(content, actions) {
-    content.innerHTML = '<p class="empty">載入…</p>';
-    return run('api_listCustomers', ['zhuyin']).then(function (data) {
-      var options = data.customers.map(function (c) {
-        var sel = state.uploadPreset && state.uploadPreset.customerId === c.id ? ' selected' : '';
-        return '<option value="' + escapeHtml(c.id) + '"' + sel + '>' + escapeHtml(c.name) + '</option>';
-      }).join('');
-
-      var cats = (state.app.settings && state.app.settings.categories) || [];
-      var catOpts = cats.map(function (cat) {
-        var sel = state.uploadPreset && state.uploadPreset.category === cat ? ' selected' : '';
-        return '<option value="' + escapeHtml(cat) + '"' + sel + '>' + escapeHtml(cat) + '</option>';
-      }).join('');
-
-      content.innerHTML =
-        '<div class="dropzone" id="dropzone">' +
-          '<p class="dropzone__title">拖曳上傳</p>' +
-          '<p class="dropzone__hint">PDF · JPG · PNG · DOCX · XLSX → 直接寫入 Google Drive</p>' +
-          '<p style="margin-top:1rem"><label class="btn btn--primary">選擇檔案<input type="file" id="file-input" hidden accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx"></label></p>' +
-        '</div>' +
-        '<div class="upload-form panel" style="margin-top:1rem">' +
-          '<div class="field"><label>客戶</label><select id="up-customer"><option value="">請選擇</option>' + options + '</select></div>' +
-          '<div class="field"><label>分類</label><select id="up-category">' + catOpts + '</select></div>' +
-          '<div class="field"><label>已選檔案</label><input id="up-filename" readonly placeholder="尚未選擇"></div>' +
-          '<button type="button" class="btn btn--accent" id="btn-upload" disabled>Upload to Drive</button>' +
-        '</div>';
-
-      var selectedFile = null;
-
-      function pickFile(file) {
-        if (!file) return;
-        selectedFile = file;
-        $('up-filename').value = file.name + ' (' + Math.round(file.size / 1024) + ' KB)';
-        $('btn-upload').disabled = false;
-      }
-
-      var dz = $('dropzone');
-      dz.addEventListener('dragover', function (e) {
-        e.preventDefault();
-        dz.classList.add('is-drag');
-      });
-      dz.addEventListener('dragleave', function () { dz.classList.remove('is-drag'); });
-      dz.addEventListener('drop', function (e) {
-        e.preventDefault();
-        dz.classList.remove('is-drag');
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) pickFile(e.dataTransfer.files[0]);
-      });
-      $('file-input').addEventListener('change', function (e) {
-        if (e.target.files && e.target.files[0]) pickFile(e.target.files[0]);
-      });
-
-      $('btn-upload').onclick = function () {
-        var customerId = $('up-customer').value;
-        var category = $('up-category').value;
-        if (!customerId) { toast('請選擇客戶', true); return; }
-        if (!selectedFile) { toast('請選擇檔案', true); return; }
-        $('btn-upload').disabled = true;
-        $('btn-upload').textContent = '上傳中…';
-        readFileAsBase64(selectedFile).then(function (b64) {
-          return run('api_uploadDocument', [{
-            customerId: customerId,
-            category: category,
-            fileName: selectedFile.name,
-            mimeType: selectedFile.type || 'application/octet-stream',
-            base64Data: b64
-          }]);
-        }).then(function () {
-          toast('已上傳至 Google Drive');
-          state.uploadPreset = null;
-          setPage('detail', { customerId: customerId });
-        }).catch(function (err) {
-          toast(err.message || err, true);
-          $('btn-upload').disabled = false;
-          $('btn-upload').textContent = 'Upload to Drive';
-        });
-      };
-    });
-  }
-
-  function readFileAsBase64(file) {
+  function fileToBase64(file) {
     return new Promise(function (resolve, reject) {
       var reader = new FileReader();
       reader.onload = function () {
         var result = String(reader.result || '');
-        var idx = result.indexOf(',');
-        resolve(idx >= 0 ? result.slice(idx + 1) : result);
+        var base64 = result.split(',')[1] || '';
+        resolve(base64);
       };
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
   }
 
-  function renderReports(content) {
-    content.innerHTML = '<p class="empty">載入報表…</p>';
-    return run('api_getReports').then(function (r) {
-      content.innerHTML =
-        '<section class="hero-strip" style="margin-bottom:1rem">' +
-          '<p class="hero-strip__brand" style="font-size:2rem">每日整理</p>' +
-          '<p class="hero-strip__lead">追蹤今日新增、整理完成與文件缺漏。</p>' +
-        '</section>' +
-        '<div class="stat-grid">' +
-          stat('今日新增', r.today.newCustomers) +
-          stat('整理完成', r.today.organized) +
-          stat('缺少文件', r.today.missingDocs) +
-          stat('最近更新', r.today.updates) +
-          stat('總完成率', r.completionRate + '%') +
+  function ownerName_() {
+    var u = state.app && state.app.user;
+    var raw = (u && u.name) || (u && u.display) || '楊以寧';
+    return stripRoleLabel_(raw);
+  }
+
+  function ownerDisplay_() {
+    return ownerName_();
+  }
+
+  /** 強制移除畫面上任何「保險業務員」殘留 */
+  function stripRoleLabel_(s) {
+    return String(s == null ? '' : s)
+      .replace(/保險業務員/g, '')
+      .replace(/業務員/g, '')
+      .replace(/保險顧問/g, '')
+      .replace(/[·•｜|／/]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim() || '楊以寧';
+  }
+
+  function appVersion_() {
+    return (state.app && state.app.appVersion) ||
+      (state.app && state.app.settings && state.app.settings.appVersion) ||
+      '260813r';
+  }
+
+  function todayLocalYmd_() {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'
+      }).format(new Date());
+    } catch (e) {
+      var d = new Date();
+      var m = ('0' + (d.getMonth() + 1)).slice(-2);
+      var day = ('0' + d.getDate()).slice(-2);
+      return d.getFullYear() + '-' + m + '-' + day;
+    }
+  }
+
+  function pad2Client_(n) {
+    n = Number(n) || 0;
+    return n < 10 ? '0' + n : String(n);
+  }
+
+  function gregorianYearFromRocClient_(ry) {
+    return Number(ry) + 1911;
+  }
+
+  function rocYearFromGregorianClient_(gy) {
+    return Number(gy) - 1911;
+  }
+
+  /** 今天民國數字：1150806 */
+  function todayLocalRocDigits_() {
+    var ymd = todayLocalYmd_();
+    var p = ymd.split('-');
+    var ry = rocYearFromGregorianClient_(p[0]);
+    return String(ry) + p[1] + p[2];
+  }
+
+  /** 相容舊呼叫：改回傳今天民國數字 */
+  function todayLocalYmdDigits_() {
+    return todayLocalRocDigits_();
+  }
+
+  /** 西元 yyyy-MM-dd → 069/08/08；MM-dd → 08/08 */
+  function formatRocDateClient_(ymd) {
+    var s = String(ymd == null ? '' : ymd).trim();
+    if (!s) return '';
+    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      var ry = rocYearFromGregorianClient_(m[1]);
+      if (!(ry >= 1 && ry <= 999)) return s;
+      var ryStr = ry >= 100 ? String(ry) : ('00' + ry).slice(-3);
+      return ryStr + '/' + m[2] + '/' + m[3];
+    }
+    m = s.match(/^(\d{1,2})-(\d{1,2})$/);
+    if (m) return pad2Client_(m[1]) + '/' + pad2Client_(m[2]);
+    return s;
+  }
+
+  /**
+   * 日期輸入 → 西元 yyyy-MM-dd（資料夾／儲存用）
+   * 民國：690808、0690808、1150806、69/08/08、民國69年8月8日
+   * 西元仍相容：19800808、1980-08-08
+   */
+  function parseDateInputToYmdClient_(raw, emptyDefault) {
+    var s = String(raw == null ? '' : raw).trim();
+    if (!s) {
+      return emptyDefault === undefined ? todayLocalYmd_() : emptyDefault;
+    }
+    s = s.replace(/^民國\s*/i, '').replace(/号/g, '日');
+
+    var m = s.match(/^(\d{1,3})[\/\-.\s年](\d{1,2})[\/\-.\s月](\d{1,2})日?$/);
+    if (m && Number(m[1]) >= 1 && Number(m[1]) <= 999) {
+      var gy = gregorianYearFromRocClient_(m[1]);
+      if (gy >= 1912 && gy <= 2100) {
+        return gy + '-' + pad2Client_(m[2]) + '-' + pad2Client_(m[3]);
+      }
+    }
+    m = s.match(/^(\d{4})[\/\-.\s年](\d{1,2})[\/\-.\s月](\d{1,2})日?$/);
+    if (m) {
+      return m[1] + '-' + pad2Client_(m[2]) + '-' + pad2Client_(m[3]);
+    }
+
+    var digits = s.replace(/\D/g, '');
+    if (digits.length === 8) {
+      return digits.slice(0, 4) + '-' + digits.slice(4, 6) + '-' + digits.slice(6, 8);
+    }
+    if (digits.length === 7) {
+      return gregorianYearFromRocClient_(digits.slice(0, 3)) + '-' + digits.slice(3, 5) + '-' + digits.slice(5, 7);
+    }
+    if (digits.length === 6) {
+      return gregorianYearFromRocClient_(digits.slice(0, 2)) + '-' + digits.slice(2, 4) + '-' + digits.slice(4, 6);
+    }
+    if (digits.length === 4) {
+      var y = String(emptyDefault || todayLocalYmd_()).slice(0, 4);
+      return y + '-' + digits.slice(0, 2) + '-' + digits.slice(2, 4);
+    }
+    return s;
+  }
+
+  /** 資料日期 → 西元 yyyy-MM-dd（Drive 資料夾名） */
+  function normalizeDocDateClient_(raw) {
+    var ymd = parseDateInputToYmdClient_(raw, todayLocalYmd_());
+    return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : todayLocalYmd_();
+  }
+
+  /** 資料日期欄位顯示用民國 */
+  function formatDocDateDisplayClient_(raw) {
+    return formatRocDateClient_(normalizeDocDateClient_(raw));
+  }
+
+  /** 試算表 Date／英文時間字串 → yyyy-MM-dd */
+  function coerceDateLikeToYmdClient_(raw) {
+    if (raw == null || raw === '') return '';
+    if (Object.prototype.toString.call(raw) === '[object Date]' && !isNaN(raw.getTime())) {
+      try {
+        return new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'
+        }).format(raw);
+      } catch (e0) {
+        return raw.getFullYear() + '-' + pad2Client_(raw.getMonth() + 1) + '-' + pad2Client_(raw.getDate());
+      }
+    }
+    var s = String(raw).trim();
+    if (!s) return '';
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    // Sat Apr 24 1982 00:00:00 GMT+0800 (台北標準時間) — 直接抓月日，避免時區差一天
+    var eng = s.match(/\b([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})\b/);
+    if (eng) {
+      var months = {
+        Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
+        Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12
+      };
+      var mm = months[eng[1]];
+      if (mm) return eng[3] + '-' + pad2Client_(mm) + '-' + pad2Client_(eng[2]);
+    }
+    if (/GMT|UTC|標準時間/i.test(s)) {
+      var d = new Date(s);
+      if (!isNaN(d.getTime())) {
+        try {
+          return new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'
+          }).format(d);
+        } catch (e1) {
+          return d.getFullYear() + '-' + pad2Client_(d.getMonth() + 1) + '-' + pad2Client_(d.getDate());
+        }
+      }
+    }
+    return s;
+  }
+
+  /**
+   * 生日 → 儲存用西元 yyyy-MM-dd（或僅月日 MM-dd）
+   */
+  function normalizeBirthdayClient_(raw) {
+    var coerced = coerceDateLikeToYmdClient_(raw);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(coerced)) return coerced;
+    var s = String(coerced || raw || '').trim();
+    if (!s) return '';
+    s = s.replace(/^民國\s*/i, '');
+    // 先解析完整日期，避免「69年8月8日」被誤判成 4 碼月日
+    var ymd = parseDateInputToYmdClient_(s, '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+    var digits = s.replace(/\D/g, '');
+    if (digits.length === 8) {
+      return digits.slice(0, 4) + '-' + digits.slice(4, 6) + '-' + digits.slice(6, 8);
+    }
+    if (digits.length === 7) {
+      return gregorianYearFromRocClient_(digits.slice(0, 3)) + '-' + digits.slice(3, 5) + '-' + digits.slice(5, 7);
+    }
+    if (digits.length === 6) {
+      return gregorianYearFromRocClient_(digits.slice(0, 2)) + '-' + digits.slice(2, 4) + '-' + digits.slice(4, 6);
+    }
+    var m = s.match(/^(\d{1,2})[\/\-.\s月](\d{1,2})日?$/);
+    if (m) return pad2Client_(m[1]) + '-' + pad2Client_(m[2]);
+    if (digits.length === 4) {
+      return digits.slice(0, 2) + '-' + digits.slice(2, 4);
+    }
+    return s;
+  }
+
+  /** 生日顯示：民國69年8月8日 */
+  function formatBirthdayDisplayClient_(raw) {
+    var stored = normalizeBirthdayClient_(raw);
+    if (!stored) return '';
+    var m = String(stored).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      var ry = rocYearFromGregorianClient_(m[1]);
+      if (ry >= 1 && ry <= 999) {
+        return '民國' + ry + '年' + Number(m[2]) + '月' + Number(m[3]) + '日';
+      }
+    }
+    m = String(stored).match(/^(\d{1,2})-(\d{1,2})$/);
+    if (m) return Number(m[1]) + '月' + Number(m[2]) + '日';
+    return stored;
+  }
+
+  /** 失焦時把生日自動轉成民國日期 */
+  function wireBirthdayInput_(el) {
+    if (!el) return;
+    var apply = function () {
+      el.value = formatBirthdayDisplayClient_(el.value);
+    };
+    el.addEventListener('change', apply);
+    el.addEventListener('blur', apply);
+  }
+
+  /** 失焦時把資料日期自動轉成民國日期 */
+  function wireDocDateInput_(el, onChange) {
+    if (!el) return;
+    var apply = function () {
+      el.value = formatDocDateDisplayClient_(el.value);
+      if (onChange) onChange();
+    };
+    el.addEventListener('change', apply);
+    el.addEventListener('blur', apply);
+  }
+
+  function pickDefaultCategory_(categories) {
+    // 已改為日期分夾，不再使用文件類型
+    return '';
+  }
+
+  /** 我的雲端硬碟／客戶資料／客戶／注音／姓名／資料日期／（無文件類型分類） */
+  function customerPathHint_(name, zhuyin, _unused, docDate) {
+    var root = (state.app && state.app.settings && state.app.settings.rootFolderName) || '客戶資料';
+    var z = String(zhuyin || '注音').trim() || '注音';
+    var n = String(name || '客戶姓名').trim() || '客戶姓名';
+    var d = String(docDate || todayLocalYmd_()).trim() || todayLocalYmd_();
+    return '我的雲端硬碟／' + root + '／客戶／' + z + '／' + n + '／' + d + '／';
+  }
+
+  function greetingText() {
+    var h = new Date().getHours();
+    var name = ownerName_();
+    if (h < 12) return '早安，' + name;
+    if (h < 18) return '午安，' + name;
+    return '晚安，' + name;
+  }
+
+  function menuPageFor(page) {
+    if (page === 'detail' || page === 'search') return 'customers';
+    return page;
+  }
+
+  function setSidebarOpen(open) {
+    var side = $('sidebar');
+    var backdrop = $('sidebar-backdrop');
+    open = !!open;
+    if (side) {
+      side.hidden = !open;
+      side.classList.toggle('hidden', !open);
+      side.classList.toggle('is-open', open);
+    }
+    if (backdrop) {
+      backdrop.hidden = !open;
+      backdrop.classList.toggle('hidden', !open);
+      backdrop.classList.toggle('is-open', open);
+    }
+  }
+
+  function setPage(page, opts) {
+    opts = opts || {};
+    state.page = page;
+    if (opts.customerId) {
+      if (state.detailCache && state.detailCache.customer &&
+          String(state.detailCache.customer.id) !== String(opts.customerId)) {
+        state.detailCache = null;
+        if (opts.openFolder === undefined) state.openFolder = null;
+      }
+      state.customerId = opts.customerId;
+    }
+    if (opts.tab) state.detailTab = opts.tab;
+    if (opts.openFolder !== undefined) state.openFolder = opts.openFolder;
+    if (page === 'upload' && opts.customerId) {
+      state.uploadCustomerId = opts.customerId;
+      state.uploadTarget = 'customer';
+    }
+    if (page === 'upload' && opts.category) state.uploadCategory = opts.category;
+
+    var active = menuPageFor(page);
+    document.querySelectorAll('.menu__item, .navpill__link, .topbar__nav-desktop button, .bottom-nav button[data-page]').forEach(function (btn) {
+      var p = btn.getAttribute('data-page');
+      if (p) btn.classList.toggle('is-active', p === active);
+    });
+    setSidebarOpen(false);
+    return render();
+  }
+
+  function animateBars(root) {
+    requestAnimationFrame(function () {
+      (root || document).querySelectorAll('[data-width]').forEach(function (el) {
+        el.style.width = el.getAttribute('data-width') + '%';
+      });
+    });
+  }
+
+  function statCard(ico, value, label) {
+    return '<article class="card stat"><div class="stat__ico">' + ico + '</div>' +
+      '<p class="stat__value">' + escapeHtml(String(value)) + '</p>' +
+      '<p class="stat__label">' + escapeHtml(label) + '</p></article>';
+  }
+
+  function renderActivity(items) {
+    if (!items || !items.length) return '<p class="empty">尚無活動</p>';
+    return '<ul class="activity">' + items.slice(0, 8).map(function (a) {
+      return '<li class="activity__item" data-id="' + escapeHtml(a.customerId || '') + '">' +
+        '<div class="activity__ico">↑</div><div>' +
+        '<p class="activity__title">' + escapeHtml((a.detail || '更新').split('·')[0].trim()) + '</p>' +
+        '<p class="activity__desc">' + escapeHtml(a.customerName || '') +
+        (a.detail && a.detail.indexOf('·') >= 0 ? ' · ' + escapeHtml(a.detail.split('·').slice(1).join('·').trim()) : '') +
+        '</p></div><div class="activity__time">' + escapeHtml(a.time || '') + '</div></li>';
+    }).join('') + '</ul>';
+  }
+
+  function pageHasWarmCache_(page) {
+    if (page === 'dashboard') return !!(cacheFresh_(state.cache.homeAt) && state.cache.home);
+    if (page === 'customers') {
+      return !!(cacheFresh_(state.cache.customersAt) && state.cache.customers) ||
+        !!(cacheFresh_(state.cache.homeAt) && state.cache.home && state.cache.home.customers);
+    }
+    if (page === 'detail') {
+      if (state.detailCache && state.detailCache.customer &&
+          String(state.detailCache.customer.id) === String(state.customerId)) return true;
+      return !!(cacheFresh_(state.cache.customersAt) && state.cache.customers);
+    }
+    if (page === 'activities') return !!(cacheFresh_(state.cache.activitiesAt) && state.cache.activities);
+    if (page === 'upload') return !!(state.app && state.app.settings);
+    return false;
+  }
+
+  async function render() {
+    var seq = ++renderSeq_;
+    var content = $('content');
+    var page = state.page;
+    var warm = pageHasWarmCache_(page);
+    // 有快取：不加 loading 遮罩，直接畫
+    if (!warm) {
+      content.classList.add('is-loading');
+      if (!content.innerHTML || !String(content.innerHTML).trim()) {
+        content.innerHTML = '<p class="muted soft-load" style="padding:24px">載入中…</p>';
+      }
+    }
+    try {
+      if (page === 'dashboard') await renderDashboard(content);
+      else if (page === 'customers') await renderCustomers(content);
+      else if (page === 'upload') await renderUpload(content);
+      else if (page === 'activities') await renderEvents(content);
+      else if (page === 'settings') await renderSettings(content);
+      else if (page === 'detail') await renderDetail(content);
+      else if (page === 'search') await renderSearch(content);
+      if (seq !== renderSeq_) return;
+      content.classList.remove('is-loading');
+      animateBars(content);
+    } catch (err) {
+      if (seq !== renderSeq_) return;
+      content.classList.remove('is-loading');
+      content.innerHTML = '<div class="card card__bd"><p>' + escapeHtml(err.message || err) + '</p></div>';
+      toast(err.message || String(err), true);
+    }
+  }
+
+  function paintDashboardShell_(content, home) {
+    var d = (home && home.dashboard) || {};
+    var bday = d.birthdaysThisWeek || { count: 0, weekLabel: '', customers: [] };
+    content.innerHTML =
+      '<section class="greeting">' +
+        '<h1>' + escapeHtml(greetingText()) + '</h1>' +
+        '<p class="muted">DriveDocs · ' + escapeHtml(ownerDisplay_()) +
+          (appVersion_() ? (' · v' + escapeHtml(appVersion_())) : '') + '</p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' +
+          '<button type="button" class="btn btn--primary" id="hero-upload">上傳</button>' +
+          '<button type="button" class="btn" id="hero-customers">客戶</button>' +
+          '<button type="button" class="btn" id="hero-activity">本週活動</button>' +
+        '</div></section>' +
+      '<div class="overview">' +
+        statCard('', d.totalCustomers != null ? d.totalCustomers : '—', '客戶') +
+        statCard('', d.todayOrganized != null ? d.todayOrganized : '—', '今日整理') +
+        statCard('', bday.count || 0, '本週壽星') +
+      '</div>' +
+      (bday.count
+        ? ('<section class="card"><div class="card__hd"><div><h2 class="card__title">本週壽星</h2>' +
+          '<p class="card__sub">' + escapeHtml(bday.weekLabel || '') + '</p></div></div><div class="card__bd">' +
+          '<ul class="activity">' + (bday.customers || []).map(function (c) {
+            return '<li class="activity__item" data-id="' + escapeHtml(c.id) + '" style="cursor:pointer">' +
+              '<div class="activity__ico">·</div><div><p class="activity__title">' + escapeHtml(c.name) + '</p>' +
+              '<p class="activity__desc">' + escapeHtml(c.weekdayLabel || formatBirthdayDisplayClient_(c.birthdayDisplay || c.birthday) || '') +
+              (c.phone ? ' · ' + escapeHtml(c.phone) : '') + '</p></div></li>';
+          }).join('') + '</ul></div></section>')
+        : '') +
+      '<div id="home-customers"></div>';
+
+    $('hero-upload').onclick = function () { state.uploadCustomerId = null; setPage('upload'); };
+    $('hero-customers').onclick = function () { setPage('customers'); };
+    $('hero-activity').onclick = function () { setPage('activities'); };
+    content.querySelectorAll('.activity__item[data-id]').forEach(function (el) {
+      el.onclick = function () {
+        setPage('detail', { customerId: el.getAttribute('data-id'), tab: 'info' });
+      };
+    });
+  }
+
+  function paintDashboardCustomers_(content, home) {
+    var list = (home && home.customers) || { customers: [], initials: [] };
+    var box = content.querySelector('#home-customers') || $('home-customers');
+    if (!box) return;
+    box.innerHTML = renderCustomerListCard(list, filterCustomers(list.customers || []));
+    bindCustomerList(content, list);
+  }
+
+  async function renderDashboard(content) {
+    // 有快取：同步先畫，客戶列表下一幀再補（體感最快）
+    if (cacheFresh_(state.cache.homeAt) && state.cache.home) {
+      paintDashboardShell_(content, state.cache.home);
+      var cached = state.cache.home;
+      requestAnimationFrame(function () {
+        if (state.page !== 'dashboard') return;
+        paintDashboardCustomers_(content, cached);
+        animateBars(content);
+      });
+      // 背景靜默更新
+      getHomeCached_(true).then(function (fresh) {
+        if (state.page !== 'dashboard' || !fresh) return;
+        paintDashboardShell_(content, fresh);
+        paintDashboardCustomers_(content, fresh);
+        animateBars(content);
+      }).catch(function () { /* ignore */ });
+      return;
+    }
+
+    var home = await getHomeCached_();
+    paintDashboardShell_(content, home);
+    requestAnimationFrame(function () {
+      if (state.page !== 'dashboard') return;
+      paintDashboardCustomers_(content, home);
+      animateBars(content);
+    });
+  }
+
+  function renderBirthdayReminderCard_(week) {
+    week = week || { weekLabel: '', count: 0, customers: [] };
+    var body;
+    if (!week.count) {
+      body = '<p class="empty">本週沒有壽星 · ' + escapeHtml(week.weekLabel || '') + '</p>';
+    } else {
+      body = '<ul class="activity">' + week.customers.map(function (c) {
+        var age = c.age != null ? (' · 滿 ' + c.age + ' 歲') : '';
+        return '<li class="activity__item" data-id="' + escapeHtml(c.id) + '" style="cursor:pointer">' +
+          '<div class="activity__ico">◎</div><div>' +
+          '<p class="activity__title">' + escapeHtml(c.name) + ' · ' + escapeHtml(c.weekdayLabel || '') + '</p>' +
+          '<p class="activity__desc">生日 ' + escapeHtml(formatBirthdayDisplayClient_(c.birthday || c.birthdayMd || '')) + age +
+          (c.phone ? ' · ' + escapeHtml(c.phone) : '') + '</p></div></li>';
+      }).join('') + '</ul>';
+    }
+    return '<div class="stack" style="margin-bottom:1rem"><section class="card">' +
+      '<div class="card__hd"><div><h2 class="card__title">本週壽星提醒</h2>' +
+      '<p class="card__sub">' + escapeHtml(week.weekLabel || '本週') + ' · 依客戶生日自動整理</p></div>' +
+      '<button type="button" class="card__link" id="btn-bday-settings">提醒設定</button></div>' +
+      '<div class="card__bd">' + body + '</div></section></div>';
+  }
+
+  function bindBirthdayCard_(content) {
+    var goSettings = content.querySelector('#btn-bday-settings');
+    if (goSettings) goSettings.onclick = function () { setPage('settings'); };
+    content.querySelectorAll('.activity__item[data-id]').forEach(function (el) {
+      el.onclick = function () {
+        setPage('detail', { customerId: el.getAttribute('data-id'), tab: 'info' });
+      };
+    });
+  }
+
+  function filterCustomers(customers) {
+    var q = (state.listQuery || '').trim().toLowerCase();
+    return (customers || []).filter(function (c) {
+      if (state.zhuyinFilter !== 'all' && c.zhuyin !== state.zhuyinFilter) return false;
+      if (!q) return true;
+      var hay = [c.name, c.phone, c.email, c.birthday, formatBirthdayDisplayClient_(c.birthday), c.address, c.idNumber, c.gender].join(' ').toLowerCase();
+      return hay.indexOf(q) >= 0;
+    });
+  }
+
+  function renderCustomerListCard(list, customers) {
+    var initials = ['全部'].concat((list.initials || []).filter(function (z) {
+      return (list.customers || []).some(function (c) { return c.zhuyin === z; });
+    }));
+    return '<section class="card">' +
+      '<div class="card__hd"><div><h2 class="card__title">客戶列表</h2><p class="card__sub">依注音排序（姓→名）</p></div></div>' +
+      '<div class="card__bd"><div class="toolbar">' +
+        '<div class="pills" id="zhuyin-pills">' +
+          initials.map(function (label) {
+            var value = label === '全部' ? 'all' : label;
+            return '<button type="button" class="pill' + (state.zhuyinFilter === value ? ' is-active' : '') + '" data-z="' + escapeHtml(value) + '">' + escapeHtml(label) + '</button>';
+          }).join('') +
         '</div>' +
-        '<div class="split-2">' +
-          '<section class="panel">' +
-            '<h2 class="panel__title">文件缺漏</h2>' +
-            (r.missing.length
-              ? '<ul class="missing-list">' + r.missing.map(function (m) {
-                  return '<li class="missing-item" data-id="' + escapeHtml(m.customerId) + '" data-name="' + escapeHtml(m.customerName) + '">' +
-                    '<div><p class="missing-item__name">' + escapeHtml(m.customerName) + '</p>' +
-                    '<p class="missing-item__cats">' + escapeHtml((m.missingCategories || []).join('、')) + '</p></div>' +
-                    '<span class="completion__pct">' + m.completion + '%</span></li>';
-                }).join('') + '</ul>'
-              : '<p class="empty">太好了，沒有缺件客戶</p>') +
-          '</section>' +
-          '<section class="panel">' +
-            '<h2 class="panel__title">近 14 日紀錄</h2>' +
-            (r.history.length
-              ? '<ul class="activity">' + r.history.map(function (h) {
-                  return '<li class="activity__item">' +
-                    '<span class="activity__check">·</span>' +
-                    '<div><p class="activity__name">' + escapeHtml(h.date) + '</p>' +
-                    '<p class="activity__detail">新增 ' + h.newCustomers + ' · 整理 ' + h.organized + ' · 更新 ' + h.updates + '</p></div></li>';
-                }).join('') + '</ul>'
-              : '<p class="empty">尚無歷史資料</p>') +
-          '</section>' +
-        '</div>';
-      content.querySelectorAll('.missing-item').forEach(function (el) {
-        el.addEventListener('click', function () {
-          setPage('detail', { customerId: el.getAttribute('data-id'), title: el.getAttribute('data-name') });
-        });
-      });
-    });
+        '<div class="toolbar__right">' +
+          '<input class="mini-search" id="list-search" placeholder="姓名／地址／生日／身分證" value="' + escapeHtml(state.listQuery) + '">' +
+          '<button type="button" class="btn btn--primary" id="btn-add-customer">新增／上傳</button>' +
+        '</div></div>' +
+        '<div class="table-wrap"><table class="table"><thead><tr>' +
+          '<th>姓名</th><th>電話</th><th>性別</th><th>生日</th><th>文件</th><th>狀態</th><th>更新</th><th></th>' +
+        '</tr></thead><tbody>' +
+        (customers.length ? customers.map(customerRow).join('') : '<tr><td colspan="8"><p class="empty">沒有符合的客戶</p></td></tr>') +
+        '</tbody></table></div></div></section>';
   }
 
-  function renderSettings(content) {
-    content.innerHTML = '<p class="empty">載入設定…</p>';
-    return run('api_getSettings').then(function (s) {
-      state.app.settings = s;
-      content.innerHTML =
-        '<div class="split-2">' +
-          '<section class="panel">' +
-            '<h2 class="panel__title">Google Drive</h2>' +
-            '<div class="field"><label>根目錄名稱</label><input id="s-root" value="' + escapeHtml(s.rootFolderName) + '"></div>' +
-            '<p style="font-size:0.85rem;color:var(--muted);margin:0 0 1rem">' +
-              (s.rootFolderUrl ? '<a href="' + escapeHtml(s.rootFolderUrl) + '" target="_blank" rel="noopener">開啟根目錄</a>' : '尚未建立') +
-            '</p>' +
-            '<div class="field"><label>命名規則</label><input id="s-naming" value="' + escapeHtml(s.namingRule) + '"></div>' +
-            '<div class="field"><label>管理員（Email，逗號分隔）</label><input id="s-admins" value="' + escapeHtml((s.admins || []).join(', ')) + '"></div>' +
-            '<p style="font-size:0.85rem;color:var(--muted)">' +
-              (s.spreadsheetUrl ? '<a href="' + escapeHtml(s.spreadsheetUrl) + '" target="_blank" rel="noopener">開啟 Sheets 索引</a>' : '') +
-            '</p>' +
-          '</section>' +
-          '<section class="panel">' +
-            '<h2 class="panel__title">資料夾模板 / 文件分類</h2>' +
-            '<div class="cat-editor" id="cat-editor">' +
-              (s.categories || []).map(function (cat, i) {
-                return '<div class="cat-editor__row"><input data-idx="' + i + '" value="' + escapeHtml(cat) + '">' +
-                  '<button type="button" class="btn btn--ghost btn-rm-cat" data-idx="' + i + '">移除</button></div>';
-              }).join('') +
-            '</div>' +
-            '<div style="margin-top:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap">' +
-              '<button type="button" class="btn" id="btn-add-cat">新增分類</button>' +
-              '<button type="button" class="btn btn--primary" id="btn-save-settings">儲存設定</button>' +
-            '</div>' +
-          '</section>' +
-        '</div>' +
-        '<section class="panel" style="margin-top:1rem">' +
-          '<h2 class="panel__title">示範資料</h2>' +
-          '<p style="color:var(--ink-soft);margin:0 0 0.85rem">匯入台灣常見姓氏示範客戶，並在 Drive 建立對應資料夾（作品集 Demo 用）。</p>' +
-          '<button type="button" class="btn btn--accent" id="btn-seed">匯入示範客戶</button>' +
-        '</section>';
+  function customerRow(c) {
+    var badge = c.isRenewal
+      ? '<span class="badge badge--renewal">續保</span>'
+      : '<span class="badge badge--new">新件</span>';
+    return '<tr data-id="' + escapeHtml(c.id) + '">' +
+      '<td><strong>' + escapeHtml(c.name) + '</strong> <span class="muted" style="font-size:12px">' +
+      escapeHtml(c.zhuyin || '') + '/' + escapeHtml(c.givenZhuyin || '') + '</span></td>' +
+      '<td>' + escapeHtml(c.phone || '—') + '</td>' +
+      '<td>' + escapeHtml(c.gender || '—') + '</td>' +
+      '<td>' + escapeHtml(formatBirthdayDisplayClient_(c.birthday) || '—') + '</td>' +
+      '<td>' + (c.fileCount || 0) + '</td><td>' + badge + '</td>' +
+      '<td>' + escapeHtml(formatDate(c.updatedAt)) + '</td>' +
+      '<td><button type="button" class="btn btn--ghost btn--sm more-btn" data-more="' + escapeHtml(c.id) + '">⋯</button></td></tr>';
+  }
 
-      $('btn-add-cat').onclick = function () {
-        var editor = $('cat-editor');
-        var row = document.createElement('div');
-        row.className = 'cat-editor__row';
-        row.innerHTML = '<input value=""><button type="button" class="btn btn--ghost btn-rm-cat">移除</button>';
-        editor.appendChild(row);
-        row.querySelector('.btn-rm-cat').onclick = function () { row.remove(); };
+  /** 客戶列表篩選：只重畫列表，不重打伺服器、不整頁閃白 */
+  function refilterCustomersInPlace_(content) {
+    var list = state.cache.customers;
+    if (!list || !list.customers) {
+      render();
+      return;
+    }
+    var q = state.listQuery || '';
+    content.innerHTML = '<div class="stack">' + renderCustomerListCard(list, filterCustomers(list.customers)) + '</div>';
+    bindCustomerList(content, list);
+    var search = content.querySelector('#list-search');
+    if (search) {
+      search.value = q;
+      try {
+        search.focus();
+        var len = search.value.length;
+        search.setSelectionRange(len, len);
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  function bindCustomerList(content, list) {
+    var pills = content.querySelector('#zhuyin-pills');
+    if (pills) {
+      pills.onclick = function (e) {
+        var btn = e.target.closest('.pill');
+        if (!btn) return;
+        state.zhuyinFilter = btn.getAttribute('data-z');
+        refilterCustomersInPlace_(content);
       };
-      content.querySelectorAll('.btn-rm-cat').forEach(function (btn) {
-        btn.onclick = function () { btn.parentElement.remove(); };
+    }
+    var search = content.querySelector('#list-search');
+    if (search) {
+      search.oninput = function () {
+        state.listQuery = search.value;
+        clearTimeout(search._filterTimer);
+        search._filterTimer = setTimeout(function () {
+          refilterCustomersInPlace_(content);
+        }, 100);
+      };
+    }
+    var add = content.querySelector('#btn-add-customer');
+    if (add) add.onclick = function () { state.uploadCustomerId = null; setPage('upload'); };
+
+    content.querySelectorAll('tbody tr[data-id]').forEach(function (row) {
+      row.addEventListener('click', function (e) {
+        if (e.target.closest('.more-btn')) return;
+        setPage('detail', { customerId: row.getAttribute('data-id'), tab: 'folders', openFolder: null });
       });
-      $('btn-save-settings').onclick = function () {
-        var categories = Array.prototype.map.call(
-          $('cat-editor').querySelectorAll('input'),
-          function (inp) { return inp.value.trim(); }
-        ).filter(Boolean);
-        var admins = $('s-admins').value.split(/[,，]/).map(function (t) { return t.trim(); }).filter(Boolean);
-        run('api_saveSettings', [{
-          rootFolderName: $('s-root').value,
-          namingRule: $('s-naming').value,
-          categories: categories,
-          admins: admins
-        }]).then(function (next) {
-          state.app.settings = next;
-          toast('設定已儲存');
-        }).catch(function (err) { toast(err.message || err, true); });
+    });
+    content.querySelectorAll('.more-btn').forEach(function (btn) {
+      btn.onclick = function (e) {
+        e.stopPropagation();
+        openMoreMenu(btn.getAttribute('data-more'));
       };
-      $('btn-seed').onclick = function () {
-        $('btn-seed').disabled = true;
-        run('api_seedDemo').then(function (res) {
-          toast(res.message || '完成');
-          $('btn-seed').disabled = false;
-        }).catch(function (err) {
-          toast(err.message || err, true);
-          $('btn-seed').disabled = false;
-        });
+    });
+    content.querySelectorAll('.activity__item[data-id]').forEach(function (el) {
+      el.onclick = function () {
+        if (el.getAttribute('data-id')) setPage('detail', { customerId: el.getAttribute('data-id'), tab: 'folders' });
       };
     });
   }
 
-  function renderSearch(content) {
-    var q = state.searchQuery || '';
-    content.innerHTML = '<p class="empty">搜尋「' + escapeHtml(q) + '」…</p>';
-    return run('api_search', [q]).then(function (res) {
-      content.innerHTML =
-        '<div class="search-results">' +
-          '<section class="panel">' +
-            '<h2 class="panel__title">客戶（' + res.customers.length + '）</h2>' +
-            (res.customers.length
-              ? '<div class="explorer">' + res.customers.map(folderRow).join('') + '</div>'
-              : '<p class="empty">沒有符合的客戶</p>') +
-          '</section>' +
-          '<section class="panel">' +
-            '<h2 class="panel__title">文件（' + res.files.length + '）</h2>' +
-            (res.files.length
-              ? '<ul class="file-list">' + res.files.map(function (x) {
-                  return '<li class="file-row">' +
-                    '<div><p class="file-row__name">' + escapeHtml(x.file.name) + '</p>' +
-                    '<p class="file-row__meta">' + escapeHtml(x.customerName) + ' · ' + escapeHtml(x.file.category) + '</p></div>' +
-                    '<div class="file-actions">' +
-                      '<button type="button" class="btn btn-open-cust" data-id="' + escapeHtml(x.customerId) + '" data-name="' + escapeHtml(x.customerName) + '">開啟客戶</button>' +
-                      '<a class="btn btn--ghost" href="' + escapeHtml(x.file.url) + '" target="_blank" rel="noopener">Drive</a>' +
-                    '</div></li>';
-                }).join('') + '</ul>'
-              : '<p class="empty">沒有符合的文件</p>') +
-          '</section>' +
-        '</div>';
-      content.querySelectorAll('.folder-row, .btn-open-cust').forEach(function (el) {
-        el.addEventListener('click', function () {
-          setPage('detail', {
-            customerId: el.getAttribute('data-id'),
-            title: el.getAttribute('data-name')
-          });
-        });
-      });
-    });
+  async function renderCustomers(content) {
+    var list = await getCustomersCached_();
+    content.innerHTML = '<div class="stack">' + renderCustomerListCard(list, filterCustomers(list.customers)) + '</div>';
+    bindCustomerList(content, list);
   }
 
-  function showCreateCustomerModal() {
+  function openMoreMenu(customerId) {
     openModal(
-      '<h2>新增客戶</h2>' +
-      '<div class="field"><label>姓名</label><input id="m-name" placeholder="王大明"></div>' +
-      '<div class="field"><label>電話</label><input id="m-phone" placeholder="0912-123-456"></div>' +
-      '<div class="field"><label>Email</label><input id="m-email" placeholder="name@example.com"></div>' +
-      '<div class="field"><label>標籤</label><input id="m-tags" placeholder="保險, VIP"></div>' +
-      '<div class="modal__actions">' +
-        '<button type="button" class="btn btn--ghost" id="m-cancel">取消</button>' +
-        '<button type="button" class="btn btn--primary" id="m-ok">建立並產生 Drive 資料夾</button>' +
-      '</div>'
+      '<h2>客戶操作</h2><div style="display:grid;gap:8px">' +
+        '<button type="button" class="btn" id="m-open">開啟資料夾</button>' +
+        '<button type="button" class="btn" id="m-upload">上傳文件</button>' +
+        '<button type="button" class="btn btn--danger" id="m-del">刪除客戶</button></div>' +
+      '<div class="modal__actions"><button type="button" class="btn" id="m-cancel">關閉</button></div>'
     );
     $('m-cancel').onclick = closeModal;
-    $('m-ok').onclick = function () {
-      var name = $('m-name').value.trim();
-      if (!name) { toast('請輸入姓名', true); return; }
-      var tags = $('m-tags').value.split(/[,，]/).map(function (t) { return t.trim(); }).filter(Boolean);
-      $('m-ok').disabled = true;
-      run('api_createCustomer', [{
-        name: name,
-        phone: $('m-phone').value.trim(),
-        email: $('m-email').value.trim(),
-        tags: tags
-      }]).then(function (c) {
+    $('m-open').onclick = function () { closeModal(); setPage('detail', { customerId: customerId, tab: 'folders' }); };
+    $('m-upload').onclick = function () {
+      closeModal();
+      state.uploadCustomerId = customerId;
+      setPage('upload');
+    };
+    $('m-del').onclick = async function () {
+      if (!confirm('確定刪除此客戶？Drive 資料夾也會移至垃圾桶。')) return;
+      try {
+        await run('api_deleteCustomer', customerId);
+        invalidateClientCache_();
         closeModal();
-        toast('已建立「' + c.name + '」');
-        setPage('detail', { customerId: c.id, title: c.name });
-      }).catch(function (err) {
-        toast(err.message || err, true);
-        $('m-ok').disabled = false;
-      });
+        toast('已刪除');
+        setPage('customers');
+      } catch (err) { toast(err.message || err, true); }
     };
   }
 
-  /* ---------- Boot ---------- */
-
-  function showSetup(app) {
-    $('boot').classList.add('hidden');
-    $('shell').classList.add('hidden');
-    $('setup').classList.remove('hidden');
-    $('setup-user').textContent = app.user && app.user.email ? '登入：' + app.user.email : '';
-    $('btn-init').onclick = function () {
-      $('btn-init').disabled = true;
-      $('btn-init').textContent = '初始化中…';
-      run('api_initialize').then(function (next) {
-        state.app = next;
-        enterApp(next);
-      }).catch(function (err) {
-        toast(err.message || err, true);
-        $('btn-init').disabled = false;
-        $('btn-init').textContent = '開始初始化';
-      });
+  function readCustomerForm_() {
+    return {
+      customerId: state.uploadCustomerId || '',
+      name: $('n-name') ? String($('n-name').value || '').trim() : '',
+      phone: $('n-phone') ? String($('n-phone').value || '').trim() : '',
+      email: $('n-email') ? String($('n-email').value || '').trim() : '',
+      birthday: $('n-birthday') ? normalizeBirthdayClient_($('n-birthday').value) : '',
+      gender: $('n-gender') ? String($('n-gender').value || '') : '',
+      idNumber: $('n-id') ? String($('n-id').value || '').trim() : '',
+      address: $('n-address') ? String($('n-address').value || '').trim() : ''
     };
   }
 
-  function enterApp(app) {
-    state.app = app;
+  async function renderUpload(content) {
+    if (!state.uploadTarget) state.uploadTarget = 'activity';
+    var toActivity = state.uploadTarget === 'activity';
+    var settings = (state.app && state.app.settings) || {};
+    if (state.app) state.app.settings = settings;
+    // 本週活動：不必載客戶列表（零 API）
+    var customers = [];
+    if (!toActivity) {
+      var list = await getCustomersCached_();
+      customers = (list && list.customers) || [];
+    }
+    if (!state.uploadDocDate) state.uploadDocDate = todayLocalYmdDigits_();
+    var activityPath = toActivity
+      ? (activityDrivePathHintClient_() ||
+        (state.app && state.app.activityPathHint) ||
+        '我的雲端硬碟／？月活動／年月周活動')
+      : '';
+    var selected = customers.find(function (c) { return c.id === state.uploadCustomerId; });
+    var options = customers.map(function (c) {
+      return '<option value="' + escapeHtml(c.id) + '"' + (state.uploadCustomerId === c.id ? ' selected' : '') + '>' +
+        escapeHtml(c.name) + ' · ' + escapeHtml(c.phone || '') + '</option>';
+    }).join('');
+    var hintName = selected ? selected.name : '';
+    var hintZhuyin = selected ? (selected.zhuyin || '') : '';
+    var customerPath = customerPathHint_(
+      hintName || '客戶姓名',
+      hintZhuyin || '注音',
+      '',
+      normalizeDocDateClient_(state.uploadDocDate)
+    );
+
+    content.innerHTML =
+      '<section class="greeting"><h1>上傳</h1><p>預設放到本週活動 · 也可改選客戶資料夾</p></section>' +
+      '<section class="card" style="margin-bottom:1rem"><div class="card__bd">' +
+        '<div class="field"><label>放到哪裡</label>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+            '<button type="button" class="btn' + (toActivity ? ' btn--primary' : '') + '" id="tgt-activity">本週活動（免填資料）</button>' +
+            '<button type="button" class="btn' + (!toActivity ? ' btn--primary' : '') + '" id="tgt-customer">客戶資料夾</button>' +
+          '</div></div></div></section>' +
+      '<div class="upload-grid">' +
+        (toActivity
+          ? '<section class="card"><div class="card__hd"><div><h2 class="card__title">本週活動</h2><p class="card__sub">選檔後直接放入，不用填任何欄位</p></div></div><div class="card__bd">' +
+            '<p class="upload-hint">檔案會放進：' + escapeHtml(activityPath) + '</p>' +
+          '</div></section>'
+          : '<section class="card"><div class="card__hd"><div><h2 class="card__title">客戶資料</h2><p class="card__sub">選既有客戶，或只填姓名</p></div></div><div class="card__bd">' +
+            '<div class="field"><label>帶入既有客戶（可選）</label><select id="up-customer"><option value="">不選擇 · 直接填寫下方</option>' + options + '</select></div>' +
+            '<div class="field-row"><div class="field"><label>姓名</label><input id="n-name" placeholder="王大明" value="' + escapeHtml(selected ? selected.name : '') + '" autocomplete="name"></div>' +
+            '<div class="field"><label>電話</label><input id="n-phone" value="' + escapeHtml(selected ? selected.phone : '') + '" inputmode="tel"></div></div>' +
+            '<div class="field-row"><div class="field"><label>電子郵件</label><input id="n-email" type="email" value="' + escapeHtml(selected ? (selected.email || '') : '') + '"></div>' +
+            '<div class="field"><label>生日（民國）</label>' +
+              '<input id="n-birthday" type="text" inputmode="numeric" autocomplete="bday" ' +
+              'placeholder="例如 690808" value="' + escapeHtml(selected ? formatBirthdayDisplayClient_(selected.birthday) : '') + '">' +
+              '<p class="upload-hint" style="margin:4px 0 0">民國數字：690808 → 民國69年8月8日</p></div></div>' +
+            '<div class="field-row"><div class="field"><label>性別</label><select id="n-gender">' +
+              '<option value="">請選擇</option><option value="男">男</option><option value="女">女</option><option value="其他">其他</option></select></div>' +
+            '<div class="field"><label>身分證號</label><input id="n-id" value="' + escapeHtml(selected ? (selected.idNumber || '') : '') + '"></div></div>' +
+            '<div class="field"><label>地址</label><input id="n-address" value="' + escapeHtml(selected ? (selected.address || '') : '') + '"></div>' +
+            '<div class="field"><label>資料日期（民國）</label>' +
+              '<input id="n-doc-date" type="text" inputmode="numeric" autocomplete="off" ' +
+              'placeholder="例如 1150806" value="' + escapeHtml(formatDocDateDisplayClient_(state.uploadDocDate)) + '">' +
+              '<p class="upload-hint" style="margin:4px 0 0">民國數字：1150806 → 115/08/06 · 檔案只依日期分夾</p></div>' +
+            '<p class="upload-hint" id="customer-path-hint">目標：' + escapeHtml(customerPath) + '</p>' +
+          '</div></section>') +
+        '<section class="card"><div class="card__hd"><div><h2 class="card__title">檔案</h2><p class="card__sub">本機或雲端既有檔</p></div></div><div class="card__bd">' +
+          (toActivity ? '' : '') +
+          '<div class="dropzone" id="dropzone"><p class="dropzone__title">拖曳檔案到這裡</p><p>也可從雲端硬碟直接選取</p>' +
+          '<p style="margin-top:1rem;display:flex;flex-wrap:wrap;gap:8px;justify-content:center">' +
+            '<button type="button" class="btn btn--primary" id="btn-pick-drive">從雲端硬碟選取</button>' +
+            '<label class="btn">選擇本機檔案<input type="file" id="file-input" hidden multiple accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx,.ppt,.pptx"></label>' +
+          '</p></div>' +
+          '<div id="upload-overall" class="upload-overall" style="display:none;margin-top:1rem"></div>' +
+          '<div id="queue-box" style="margin-top:1rem">' + renderQueue() + '</div>' +
+          '<div class="upload-hint">' + (toActivity
+            ? ('一鍵放入 · ' + escapeHtml(activityPath))
+            : ('檔案會放進：' + escapeHtml(customerPath))) + '</div>' +
+          '<div style="margin-top:1rem;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">' +
+            (toActivity
+              ? '<button type="button" class="btn btn--primary" id="btn-start-upload">放到本週活動</button>'
+              : '<button type="button" class="btn btn--primary" id="btn-start-upload">上傳到客戶</button>') +
+          '</div></div></section></div>';
+
+    $('tgt-customer').onclick = function () {
+      state.uploadTarget = 'customer';
+      renderUpload(content);
+    };
+    $('tgt-activity').onclick = function () {
+      state.uploadTarget = 'activity';
+      renderUpload(content);
+    };
+
+    if (!toActivity) {
+      if (selected && selected.gender && $('n-gender')) $('n-gender').value = selected.gender;
+      var sel = $('up-customer');
+      function refreshCustomerPathHint_() {
+        var nameEl = $('n-name');
+        var dateEl = $('n-doc-date');
+        var name = nameEl ? String(nameEl.value || '').trim() : '';
+        var zh = selected && selected.name === name ? (selected.zhuyin || '') : '';
+        if (dateEl) state.uploadDocDate = String(dateEl.value || '').trim() || todayLocalYmdDigits_();
+        var path = customerPathHint_(
+          name || '客戶姓名',
+          zh || '注音',
+          '',
+          normalizeDocDateClient_(state.uploadDocDate)
+        );
+        var hint = $('customer-path-hint');
+        if (hint) hint.textContent = '目標：' + path;
+      }
+      if (sel) {
+        sel.onchange = function () {
+          state.uploadCustomerId = sel.value || null;
+          renderUpload(content);
+        };
+      }
+      if ($('n-name')) {
+        $('n-name').addEventListener('input', function () {
+          if (selected) {
+            var typed = String($('n-name').value || '').trim();
+            if (typed && typed !== selected.name) {
+              state.uploadCustomerId = null;
+              if (sel) sel.value = '';
+              selected = null;
+            }
+          }
+          refreshCustomerPathHint_();
+        });
+      }
+      if ($('n-doc-date')) {
+        $('n-doc-date').addEventListener('input', refreshCustomerPathHint_);
+        wireDocDateInput_($('n-doc-date'), refreshCustomerPathHint_);
+      }
+      wireBirthdayInput_($('n-birthday'));
+    }
+
+    var dz = $('dropzone');
+    var input = $('file-input');
+    function addFiles(fileList) {
+      Array.prototype.forEach.call(fileList || [], function (f) {
+        state.uploadQueue.push({
+          source: 'local',
+          name: f.name, size: f.size, mimeType: f.type, file: f,
+          docType: '',
+          progress: 0, status: '等待中'
+        });
+      });
+      $('queue-box').innerHTML = renderQueue();
+      bindQueue();
+    }
+    function addDriveFiles(files, importMode) {
+      (files || []).forEach(function (f) {
+        var exists = state.uploadQueue.some(function (q) {
+          return q.source === 'drive' && q.driveFileId === f.id;
+        });
+        if (exists) return;
+        state.uploadQueue.push({
+          source: 'drive',
+          driveFileId: f.id,
+          importMode: importMode || 'move',
+          name: f.name,
+          size: f.size || 0,
+          mimeType: f.mimeType || '',
+          docType: '',
+          progress: 0,
+          status: '等待中'
+        });
+      });
+      $('queue-box').innerHTML = renderQueue();
+      bindQueue();
+    }
+    input.onchange = function () { addFiles(input.files); input.value = ''; };
+    dz.addEventListener('dragover', function (e) { e.preventDefault(); dz.classList.add('is-drag'); });
+    dz.addEventListener('dragleave', function () { dz.classList.remove('is-drag'); });
+    dz.addEventListener('drop', function (e) {
+      e.preventDefault(); dz.classList.remove('is-drag'); addFiles(e.dataTransfer.files);
+    });
+    $('btn-pick-drive').onclick = function () {
+      openDrivePicker_(function (picked, mode) {
+        addDriveFiles(picked, mode);
+        toast('已加入 ' + picked.length + ' 個雲端檔案');
+      });
+    };
+    bindQueue();
+
+    $('btn-start-upload').onclick = async function () {
+      var btn = $('btn-start-upload');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '處理中…';
+      }
+      try {
+        if (!state.uploadQueue.length) throw new Error('請先選檔案');
+        await runUploadFlow_(btn);
+      } catch (err) {
+        toast(err.message || err, true);
+      } finally {
+        setUploadProgress_(null);
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = state.uploadTarget === 'activity' ? '放到本週活動' : '上傳到客戶';
+        }
+      }
+    };
+  }
+
+  /* ========= 批次上傳 · 頂端進度條 ========= */
+
+  function setUploadProgress_(info) {
+    state.uploadProgress = info;
+    var el = document.getElementById('upload-overall');
+    if (!el) return;
+    if (!info) { el.innerHTML = ''; el.style.display = 'none'; return; }
+    var pct = Math.max(0, Math.min(100, Math.round(info.percent || 0)));
+    el.style.display = '';
+    el.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+        '<strong>' + escapeHtml(info.label || '上傳中') + '</strong>' +
+        '<span class="muted" style="font-size:12px">' +
+          (info.done != null && info.total != null ? (info.done + ' / ' + info.total + ' · ') : '') +
+          pct + '%</span>' +
+      '</div>' +
+      '<div class="progress__bar"><div class="progress__fill" style="width:' + pct + '%"></div></div>';
+  }
+
+  function markQueue_(idxSet, status, progress) {
+    for (var k = 0; k < state.uploadQueue.length; k++) {
+      if (idxSet[k]) {
+        state.uploadQueue[k].status = status;
+        if (progress != null) state.uploadQueue[k].progress = progress;
+      }
+    }
+    $('queue-box').innerHTML = renderQueue();
+    bindQueue();
+  }
+
+  function chunkBySize_(items, maxBytes) {
+    var out = [];
+    var buf = [];
+    var size = 0;
+    for (var i = 0; i < items.length; i++) {
+      var s = Number(items[i].size) || 0;
+      if (buf.length && (size + s) > maxBytes) {
+        out.push(buf); buf = []; size = 0;
+      }
+      buf.push(items[i]);
+      size += s;
+    }
+    if (buf.length) out.push(buf);
+    return out;
+  }
+
+  async function runUploadFlow_(btn) {
+    var queue = state.uploadQueue;
+    var total = queue.length;
+    setUploadProgress_({ label: '準備中', percent: 2, done: 0, total: total });
+
+    if (state.uploadTarget === 'activity') {
+      // 讀檔平行、單次呼叫送出
+      var idxAll = {};
+      queue.forEach(function (_, k) { idxAll[k] = true; });
+      markQueue_(idxAll, '讀檔', 15);
+
+      var files = await Promise.all(queue.map(async function (it) {
+        if (it.source === 'drive') {
+          return { name: it.name, fileId: it.driveFileId, driveFileId: it.driveFileId,
+                   size: it.size, mimeType: it.mimeType };
+        }
+        var b64 = await fileToBase64(it.file);
+        return { name: it.name, size: it.size, mimeType: it.mimeType, base64Data: b64 };
+      }));
+      setUploadProgress_({ label: '上傳到本週活動', percent: 60, done: 0, total: total });
+      markQueue_(idxAll, '上傳中', 60);
+
+      var created = await run('api_quickAddToThisWeekActivity', {
+        files: files,
+        importMode: (queue[0] && queue[0].importMode) || 'move'
+      });
+      markQueue_(idxAll, '完成', 100);
+      setUploadProgress_({ label: '已放入 · ' + (created && created.title), percent: 100, done: total, total: total });
+      toast('已放入本週活動：「' + (created && created.title) + '」');
+      state.uploadQueue = [];
+      state.cache.activities = null; state.cache.activitiesAt = 0;
+      await setPage('activities');
+      return;
+    }
+
+    // === 客戶資料夾 ===
+    var form = readCustomerForm_();
+    if (!form.customerId && !form.name) {
+      throw new Error('請填寫姓名，或從上方選擇既有客戶');
+    }
+    if (btn) btn.textContent = '建立客戶…';
+    setUploadProgress_({ label: '準備客戶', percent: 5, done: 0, total: total });
+    var ensured = await run('api_ensureCustomer', {
+      customerId: form.customerId || undefined,
+      id: form.customerId || undefined,
+      customerName: form.name, name: form.name,
+      phone: form.phone, email: form.email, birthday: form.birthday,
+      gender: form.gender, idNumber: form.idNumber, address: form.address
+    });
+    invalidateClientCache_();
+    var customerId = ensured.id;
+    state.uploadCustomerId = customerId;
+
+    var docDateRaw = ($('n-doc-date') && $('n-doc-date').value) || state.uploadDocDate || todayLocalYmdDigits_();
+    state.uploadDocDate = String(docDateRaw).trim();
+    var docDate = normalizeDocDateClient_(state.uploadDocDate);
+
+    var drivePos = [], localPos = [];
+    for (var i = 0; i < queue.length; i++) {
+      (queue[i].source === 'drive' ? drivePos : localPos).push(i);
+    }
+
+    var done = 0;
+    function tick_(delta, label) {
+      done += (delta || 0);
+      var pct = total ? Math.round((done / total) * 95) + 5 : 100;
+      setUploadProgress_({ label: label || '上傳中', percent: pct, done: done, total: total });
+    }
+
+    // (1) 雲端匯入：一次呼叫全部
+    if (drivePos.length) {
+      var idxSet = {}; drivePos.forEach(function (k) { idxSet[k] = true; });
+      markQueue_(idxSet, '匯入中', 40);
+      if (btn) btn.textContent = '匯入雲端 ' + drivePos.length + ' 個…';
+      var res = await run('api_importDocuments', {
+        customerId: customerId,
+        items: drivePos.map(function (k) {
+          var it = queue[k];
+          return {
+            category: '',
+            fileId: it.driveFileId,
+            fileName: it.name,
+            mode: it.importMode || 'move',
+            docDate: docDate
+          };
+        })
+      });
+      applyBatchResult_(res, drivePos);
+      tick_(drivePos.length, '雲端匯入完成');
+    }
+
+    // (2) 本機檔案：平行讀 base64，再依 ~10MB 分批呼叫
+    if (localPos.length) {
+      var idxSet2 = {}; localPos.forEach(function (k) { idxSet2[k] = true; });
+      markQueue_(idxSet2, '讀檔', 25);
+      if (btn) btn.textContent = '讀取檔案…';
+      var b64s = await Promise.all(localPos.map(function (k) { return fileToBase64(queue[k].file); }));
+      var items = localPos.map(function (k, i) {
+        var it = queue[k];
+        return {
+          _pos: k,
+          category: '',
+          fileName: it.name,
+          mimeType: it.mimeType,
+          base64Data: b64s[i],
+          docDate: docDate,
+          size: (b64s[i] || '').length
+        };
+      });
+      var batches = chunkBySize_(items, 10 * 1024 * 1024);
+      for (var b = 0; b < batches.length; b++) {
+        var batch = batches[b];
+        var posInBatch = batch.map(function (x) { return x._pos; });
+        var batchIdx = {}; posInBatch.forEach(function (k) { batchIdx[k] = true; });
+        markQueue_(batchIdx, '上傳中', 65);
+        if (btn) btn.textContent = '上傳中 ' + (b + 1) + '/' + batches.length;
+        var payloadItems = batch.map(function (x) {
+          var o = {};
+          for (var kk in x) if (kk !== '_pos' && kk !== 'size') o[kk] = x[kk];
+          return o;
+        });
+        var r = await run('api_uploadDocuments', { customerId: customerId, items: payloadItems });
+        applyBatchResult_(r, posInBatch);
+        tick_(posInBatch.length, '上傳中 ' + done + '/' + total);
+      }
+    }
+
+    setUploadProgress_({ label: '完成', percent: 100, done: total, total: total });
+    toast('上傳完成');
+    state.uploadQueue = [];
+    state.detailCache = null;
+    invalidateClientCache_();
+    if (btn) btn.textContent = '開啟客戶…';
+    await setPage('detail', { customerId: customerId, tab: 'folders' });
+  }
+
+  function applyBatchResult_(res, positions) {
+    var results = (res && res.results) || [];
+    for (var i = 0; i < positions.length; i++) {
+      var pos = positions[i];
+      var r = results[i];
+      if (!state.uploadQueue[pos]) continue;
+      if (r && r.ok) {
+        state.uploadQueue[pos].status = '完成';
+        state.uploadQueue[pos].progress = 100;
+      } else {
+        state.uploadQueue[pos].status = '失敗: ' + ((r && r.error) || '未知');
+        state.uploadQueue[pos].progress = 0;
+      }
+    }
+    $('queue-box').innerHTML = renderQueue();
+    bindQueue();
+  }
+
+  function renderQueue() {
+    if (!state.uploadQueue.length) return '<p class="empty">尚未加入檔案</p>';
+    var showType = state.uploadTarget !== 'activity';
+    return '<ul class="queue">' + state.uploadQueue.map(function (item, idx) {
+      var srcLabel = item.source === 'drive'
+        ? ('雲端' + (item.importMode === 'move' ? '·移動' : (item.importMode === 'shortcut' ? '·捷徑' : '·複製')))
+        : '本機';
+      return '<li class="queue__item"><div style="display:flex;justify-content:space-between;gap:8px">' +
+        '<div><strong>' + escapeHtml(item.name) + '</strong><div class="muted" style="font-size:12px">' +
+        escapeHtml(srcLabel) + ' · ' + escapeHtml(formatSize(item.size)) + ' · ' + escapeHtml(item.status) + '</div></div>' +
+        '<button type="button" class="btn btn--ghost btn--sm btn-rm-q" data-idx="' + idx + '">移除</button></div>' +
+        (showType
+          ? ''
+          : '') +
+        '<div class="progress__bar" style="margin-top:8px"><div class="progress__fill" style="width:' + (item.progress || 0) + '%"></div></div></li>';
+    }).join('') + '</ul>';
+  }
+
+  function openDrivePicker_(onDone) {
+    // 預設用內建資料夾瀏覽（最穩、不必 API Key）
+    openDriveBrowserModal_(onDone);
+  }
+
+  function tryOpenGooglePicker_(onDone) {
+    return new Promise(function (resolve, reject) {
+      function fail(err) { reject(err || new Error('picker unavailable')); }
+
+      function startPicker(cfg) {
+        if (typeof google === 'undefined' || !google.picker) {
+          fail();
+          return;
+        }
+        try {
+          var view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+            .setIncludeFolders(true)
+            .setSelectFolderEnabled(false)
+            .setMode(google.picker.DocsViewMode.LIST);
+          var builder = new google.picker.PickerBuilder()
+            .addView(view)
+            .addView(google.picker.ViewId.RECENTLY_PICKED)
+            .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+            .enableFeature(google.picker.Feature.SUPPORT_DRIVES)
+            .setOAuthToken(cfg.token)
+            .setOrigin(cfg.origin || 'https://script.google.com')
+            .setTitle('選取雲端硬碟檔案')
+            .setCallback(function (data) {
+              if (!data) return;
+              if (data.action === google.picker.Action.CANCEL) return;
+              if (data.action !== google.picker.Action.PICKED) return;
+              var docs = data.docs || [];
+              var files = docs.filter(function (d) {
+                return d && d.id && d.mimeType !== 'application/vnd.google-apps.folder';
+              }).map(function (d) {
+                return {
+                  id: d.id,
+                  name: d.name,
+                  mimeType: d.mimeType || '',
+                  size: d.sizeBytes || 0,
+                  url: d.url || ''
+                };
+              });
+              if (!files.length) {
+                toast('請選擇檔案（不要選資料夾）', true);
+                return;
+              }
+              closeModal();
+              onDone(files, 'move');
+              toast('已加入 ' + files.length + ' 個雲端檔案（將移動）');
+            });
+          var picker = builder.build();
+          picker.setVisible(true);
+          resolve(true);
+        } catch (e) {
+          fail(e);
+        }
+      }
+
+      loadGapiScript_().then(function () {
+        return run('api_getPickerConfig');
+      }).then(function (cfg) {
+        if (!cfg || !cfg.token) {
+          fail();
+          return;
+        }
+        if (typeof gapi === 'undefined' || !gapi.load) {
+          fail(new Error('尚未載入 Google API'));
+          return;
+        }
+        gapi.load('picker', {
+          callback: function () { startPicker(cfg); },
+          onerror: fail,
+          timeout: 8000,
+          ontimeout: fail
+        });
+      }).catch(fail);
+    });
+  }
+
+  function loadGapiScript_() {
+    return new Promise(function (resolve, reject) {
+      if (typeof gapi !== 'undefined' && gapi.load) {
+        resolve();
+        return;
+      }
+      var existing = document.getElementById('gapi-js');
+      if (existing) {
+        existing.addEventListener('load', function () { resolve(); });
+        existing.addEventListener('error', reject);
+        return;
+      }
+      var s = document.createElement('script');
+      s.id = 'gapi-js';
+      s.src = 'https://apis.google.com/js/api.js';
+      s.async = true;
+      s.onload = function () { resolve(); };
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  function openDriveBrowserModal_(onDone) {
+    openModal(
+      '<h2>從雲端硬碟選取</h2>' +
+      '<p class="muted" style="margin:0 0 12px">可瀏覽資料夾、搜尋，或貼上檔案連結</p>' +
+      '<div class="field"><label>檔案連結或 ID</label>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<input id="drv-link" placeholder="https://drive.google.com/file/d/…" style="flex:1;min-width:160px">' +
+          '<button type="button" class="btn" id="drv-add-link">加入</button></div></div>' +
+      '<div class="field"><label>搜尋檔名</label>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<input id="drv-q" placeholder="例如：保單、身分證（可留空看近期）" style="flex:1;min-width:160px">' +
+          '<button type="button" class="btn" id="drv-search">搜尋</button>' +
+          '<button type="button" class="btn" id="drv-browse">瀏覽資料夾</button>' +
+          '<button type="button" class="btn" id="drv-gpicker">Google 選檔器</button></div></div>' +
+      '<div class="field"><label>匯入方式</label><select id="drv-mode">' +
+        '<option value="move" selected>移動到客戶資料夾（原位置移除）</option>' +
+        '<option value="copy">複製到客戶資料夾（原檔保留）</option>' +
+        '<option value="shortcut">建立捷徑（直接使用原檔）</option></select></div>' +
+      '<div id="drv-path" class="upload-hint" style="margin-top:8px"></div>' +
+      '<div id="drv-results" style="max-height:280px;overflow:auto;margin-top:8px"><p class="empty">載入中…</p></div>' +
+      '<div class="modal__actions">' +
+        '<button type="button" class="btn" id="drv-cancel">關閉</button>' +
+        '<button type="button" class="btn btn--primary" id="drv-confirm">加入所選</button></div>'
+    );
+
+    var pickedMap = {};
+    var browseFolderId = '';
+    function mode() { return ($('drv-mode') && $('drv-mode').value) || 'move'; }
+
+    function renderResults(list, meta) {
+      var box = $('drv-results');
+      meta = meta || {};
+      var folders = meta.folders || [];
+      var files = list || [];
+      if (!folders.length && !files.length) {
+        box.innerHTML = '<p class="empty">此處沒有檔案</p>';
+        return;
+      }
+      var html = '';
+      if (meta.showUp) {
+        html += '<button type="button" class="btn btn--ghost btn--sm" id="drv-up" style="margin-bottom:8px">↑ 上一層</button>';
+      }
+      html += '<ul class="queue" style="margin:0">';
+      folders.forEach(function (f) {
+        html += '<li class="queue__item" style="padding:8px 0;border-bottom:1px solid rgba(13,13,13,.08)">' +
+          '<button type="button" class="btn btn--ghost btn--sm drv-open-folder" data-id="' + escapeHtml(f.id) + '" style="width:100%;text-align:left;justify-content:flex-start">' +
+          '📁 ' + escapeHtml(f.name) + '</button></li>';
+      });
+      files.forEach(function (f) {
+        var checked = pickedMap[f.id] ? ' checked' : '';
+        html += '<li class="queue__item" style="padding:10px 0;border-bottom:1px solid rgba(13,13,13,.08)">' +
+          '<label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">' +
+          '<input type="checkbox" class="drv-check" data-id="' + escapeHtml(f.id) + '"' + checked + '>' +
+          '<span><strong>' + escapeHtml(f.name) + '</strong>' +
+          '<div class="muted" style="font-size:12px">' + escapeHtml(formatSize(f.size)) +
+          (f.mimeType ? ' · ' + escapeHtml(String(f.mimeType).split('.').pop()) : '') + '</div></span></label></li>';
+      });
+      html += '</ul>';
+      box.innerHTML = html;
+
+      var up = $('drv-up');
+      if (up) {
+        up.onclick = function () {
+          loadFolder(meta.parentId || '');
+        };
+      }
+      box.querySelectorAll('.drv-open-folder').forEach(function (btn) {
+        btn.onclick = function () { loadFolder(btn.getAttribute('data-id')); };
+      });
+      box.querySelectorAll('.drv-check').forEach(function (cb) {
+        cb.onchange = function () {
+          var id = cb.getAttribute('data-id');
+          if (cb.checked) {
+            var hit = files.find(function (x) { return x.id === id; });
+            if (hit) pickedMap[id] = hit;
+          } else {
+            delete pickedMap[id];
+          }
+        };
+      });
+    }
+
+    async function loadFolder(folderId) {
+      browseFolderId = folderId || '';
+      $('drv-results').innerHTML = '<p class="empty">載入資料夾…</p>';
+      try {
+        var data = await run('api_listDriveFolder', browseFolderId);
+        $('drv-path').textContent = '目前位置：' + (data.name || '我的雲端硬碟');
+        renderResults(data.files || [], {
+          folders: data.folders || [],
+          showUp: !data.isRoot,
+          parentId: data.parentId || ''
+        });
+      } catch (err) {
+        $('drv-results').innerHTML = '<p class="empty">' + escapeHtml(err.message || err) + '</p>';
+      }
+    }
+
+    $('drv-cancel').onclick = closeModal;
+    $('drv-add-link').onclick = async function () {
+      var raw = $('drv-link').value.trim();
+      if (!raw) { toast('請貼上雲端連結', true); return; }
+      try {
+        var file = await run('api_resolveDriveFile', raw);
+        if (file.isFolder) {
+          loadFolder(file.id);
+          $('drv-link').value = '';
+          toast('已開啟資料夾：' + file.name);
+          return;
+        }
+        pickedMap[file.id] = file;
+        renderResults(Object.keys(pickedMap).map(function (k) { return pickedMap[k]; }), {});
+        $('drv-path').textContent = '已選 ' + Object.keys(pickedMap).length + ' 個檔案';
+        $('drv-link').value = '';
+        toast('已辨識：' + file.name);
+      } catch (err) {
+        toast(err.message || err, true);
+      }
+    };
+    $('drv-search').onclick = async function () {
+      var q = $('drv-q').value.trim();
+      $('drv-path').textContent = q ? ('搜尋：' + q) : '近期檔案';
+      $('drv-results').innerHTML = '<p class="empty">搜尋中…</p>';
+      try {
+        var list = await run('api_searchDriveFiles', q, 30);
+        renderResults(list, {});
+      } catch (err) {
+        $('drv-results').innerHTML = '<p class="empty">' + escapeHtml(err.message || err) + '</p>';
+      }
+    };
+    $('drv-browse').onclick = function () { loadFolder(''); };
+    $('drv-gpicker').onclick = function () {
+      toast('正在開啟 Google 選檔器…');
+      tryOpenGooglePicker_(onDone).catch(function (err) {
+        toast((err && err.message) ? err.message : '選檔器無法開啟，請改用下方瀏覽／搜尋／貼連結', true);
+      });
+    };
+    $('drv-q').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); $('drv-search').click(); }
+    });
+    $('drv-link').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); $('drv-add-link').click(); }
+    });
+    $('drv-confirm').onclick = function () {
+      var files = Object.keys(pickedMap).map(function (k) { return pickedMap[k]; });
+      if (!files.length) { toast('請先勾選檔案，或貼上連結加入', true); return; }
+      closeModal();
+      onDone(files, mode());
+    };
+
+    // 預設直接進入資料夾瀏覽（最穩）
+    loadFolder('');
+  }
+
+  function bindQueue() {
+    document.querySelectorAll('.btn-rm-q').forEach(function (btn) {
+      btn.onclick = function () {
+        state.uploadQueue.splice(Number(btn.getAttribute('data-idx')), 1);
+        $('queue-box').innerHTML = renderQueue();
+        bindQueue();
+      };
+    });
+    document.querySelectorAll('.doc-type').forEach(function (input) {
+      input.onchange = function () {
+        var i = Number(input.getAttribute('data-idx'));
+        if (state.uploadQueue[i]) state.uploadQueue[i].docType = input.value;
+      };
+    });
+  }
+
+  function paintEventsUI_(content, items) {
+    var weekKey = 'activityWeek';
+    var weekOptions = listWeekOptionsClient_(16);
+    if (!state[weekKey]) {
+      var cur = weekOptions.find(function (o) { return o.isCurrent; });
+      state[weekKey] = (cur && cur.value) || weekOptions[0].value;
+    }
+    if (!weekOptions.some(function (o) { return o.value === state[weekKey]; })) {
+      weekOptions = [{ value: state[weekKey], label: state[weekKey] + '（已選）', isCurrent: false }].concat(weekOptions);
+    }
+    var period = state[weekKey];
+    var pathHint = activityDrivePathHintClient_(period);
+    var list = items || [];
+    var current = list.filter(function (x) { return x.period === period; });
+    var older = list.filter(function (x) { return x.period !== period; });
+    var weekSelect = weekOptions.map(function (o) {
+      return '<option value="' + escapeHtml(o.value) + '"' + (o.value === period ? ' selected' : '') + '>' +
+        escapeHtml(o.label || o.value) + '</option>';
+    }).join('');
+
+    content.innerHTML =
+      '<section class="greeting"><h1>本週活動</h1>' +
+        '<p>可選本週或過去週次 · 附檔寫入：' + escapeHtml(pathHint) + '</p></section>' +
+      '<section class="card" style="margin-bottom:1rem"><div class="card__bd">' +
+        '<div class="field"><label>檢視／新增的週次</label><select id="ev-week">' + weekSelect + '</select></div>' +
+      '</div></section>' +
+      '<section class="card" style="margin-bottom:1rem"><div class="card__hd"><div><h2 class="card__title">新增活動</h2>' +
+        '<p class="card__sub">將建立在所選週次</p></div></div><div class="card__bd">' +
+        '<div class="field"><label>標題</label><input id="ev-title" placeholder="例如：客戶答謝午宴"></div>' +
+        '<div class="field"><label>期間（週次）</label><select id="ev-period">' + weekSelect + '</select></div>' +
+        '<div class="field"><label>備註</label><input id="ev-notes"></div>' +
+        '<p class="upload-hint" id="ev-path-hint">目標：' + escapeHtml(pathHint) + '</p>' +
+        '<div class="field"><label>上傳檔案</label><input type="file" id="ev-files" multiple></div>' +
+        '<div id="ev-overall" class="upload-overall" style="display:none;margin-top:8px"></div>' +
+        '<button type="button" class="btn btn--primary" id="btn-ev-create">建立並上傳</button></div></section>' +
+      '<section class="card"><div class="card__hd"><div><h2 class="card__title">此週紀錄</h2>' +
+        '<p class="card__sub">' + escapeHtml(period) + ' · ' + current.length + ' 筆</p></div></div>' +
+        '<div class="card__bd">' + renderEventList(current) + '</div></section>' +
+      (older.length ? '<section class="card" style="margin-top:1rem"><div class="card__hd"><div><h2 class="card__title">其他週次</h2></div></div><div class="card__bd">' + renderEventList(older) + '</div></section>' : '');
+
+    function refreshEvPathHint_() {
+      var p = ($('ev-period') && $('ev-period').value) || period;
+      var el = $('ev-path-hint');
+      if (el) el.textContent = '目標：' + activityDrivePathHintClient_(p);
+    }
+
+    $('ev-week').onchange = function () {
+      state[weekKey] = $('ev-week').value;
+      paintEventsUI_(content, state.cache.activities || []);
+    };
+    $('ev-period').value = period;
+    $('ev-period').onchange = refreshEvPathHint_;
+
+    $('btn-ev-create').onclick = async function () {
+      var btn2 = $('btn-ev-create');
+      if (btn2) { btn2.disabled = true; btn2.textContent = '處理中…'; }
+      var setEvBar = function (info) {
+        var el = document.getElementById('ev-overall');
+        if (!el) return;
+        if (!info) { el.style.display = 'none'; el.innerHTML = ''; return; }
+        var pct = Math.max(0, Math.min(100, Math.round(info.percent || 0)));
+        el.style.display = '';
+        el.innerHTML =
+          '<div style="display:flex;justify-content:space-between;margin-bottom:4px">' +
+            '<strong>' + escapeHtml(info.label || '上傳中') + '</strong>' +
+            '<span class="muted" style="font-size:12px">' + pct + '%</span>' +
+          '</div>' +
+          '<div class="progress__bar"><div class="progress__fill" style="width:' + pct + '%"></div></div>';
+      };
+      try {
+        var filesInput = $('ev-files').files;
+        var fileList = [];
+        for (var i = 0; i < (filesInput || []).length; i++) fileList.push(filesInput[i]);
+        setEvBar({ label: '讀取檔案', percent: 15 });
+        var b64s = await Promise.all(fileList.map(function (f) { return fileToBase64(f); }));
+        var files = fileList.map(function (f, k) {
+          return { name: f.name, size: f.size, mimeType: f.type, base64Data: b64s[k] };
+        });
+        setEvBar({ label: '寫入活動資料夾', percent: 60 });
+        var chosenPeriod = ($('ev-period').value || period).trim();
+        await run('api_createActivity', {
+          title: $('ev-title').value.trim(),
+          period: chosenPeriod,
+          notes: $('ev-notes').value.trim(),
+          files: files
+        });
+        setEvBar({ label: '完成', percent: 100 });
+        state.cache.weekOptions = null;
+        state.cache.weekOptionsAt = 0;
+        state.cache.activities = null;
+        state.cache.activitiesAt = 0;
+        state[weekKey] = chosenPeriod;
+        toast('已建立於 ' + chosenPeriod);
+        renderEvents(content);
+      } catch (err) {
+        toast(err.message || err, true);
+      } finally {
+        if (btn2) { btn2.disabled = false; btn2.textContent = '建立並上傳'; }
+        setTimeout(function () { setEvBar(null); }, 800);
+      }
+    };
+  }
+
+  async function renderEvents(content) {
+    if (cacheFresh_(state.cache.activitiesAt) && state.cache.activities) {
+      paintEventsUI_(content, state.cache.activities);
+      run('api_listActivities').then(function (items) {
+        if (!items) return;
+        state.cache.activities = items;
+        state.cache.activitiesAt = Date.now();
+        if (state.page === 'activities') paintEventsUI_(content, items);
+      }).catch(function () { /* keep old */ });
+      return;
+    }
+    content.innerHTML = '<p class="muted soft-load" style="padding:24px">載入活動…</p>';
+    try {
+      var items = await run('api_listActivities');
+      state.cache.activities = items || [];
+      state.cache.activitiesAt = Date.now();
+      paintEventsUI_(content, state.cache.activities);
+    } catch (err) {
+      content.innerHTML = '<div class="card card__bd"><p>' + escapeHtml(err.message || err) + '</p></div>';
+    }
+  }
+
+  function renderEventList(items) {
+    if (!items.length) return '<p class="empty">尚無資料</p>';
+    return '<ul class="activity">' + items.map(function (ev) {
+      var fileNames = (ev.files || []).map(function (f) { return f.name; }).join('、') || '尚無檔案';
+      return '<li class="activity__item"><div class="activity__ico">📎</div><div>' +
+        '<p class="activity__title">' + escapeHtml(ev.title) + '</p>' +
+        '<p class="activity__desc">' + escapeHtml(ev.period) + (ev.notes ? ' · ' + escapeHtml(ev.notes) : '') +
+        '<br>' + escapeHtml(fileNames) + '</p></div>' +
+        '<div class="activity__time">' + escapeHtml(formatDate(ev.createdAt)) + '</div></li>';
+    }).join('') + '</ul>';
+  }
+
+  function findCachedCustomer_(id) {
+    var list = state.cache.customers;
+    if (!list || !list.customers) return null;
+    for (var i = 0; i < list.customers.length; i++) {
+      if (String(list.customers[i].id) === String(id)) return list.customers[i];
+    }
+    return null;
+  }
+
+  function paintDetailShell_(content, c, tab, data) {
+    content.innerHTML =
+      '<div class="detail-head"><div><h1>' + escapeHtml(c.name || '客戶') + ' ' +
+        (c.isRenewal ? '<span class="badge badge--renewal">續保</span>' : '<span class="badge badge--new">新件</span>') +
+      '</h1><p class="detail-head__meta">' + escapeHtml(c.phone || '無電話') +
+        (c.gender ? ' · ' + escapeHtml(c.gender) : '') +
+        (c.birthday ? ' · 生日 ' + escapeHtml(formatBirthdayDisplayClient_(c.birthday)) : '') +
+        (c.idNumber ? ' · ' + escapeHtml(c.idNumber) : '') +
+        (c.address ? ' · ' + escapeHtml(c.address) : '') +
+      '</p></div><div class="detail-head__right">' +
+        '<button type="button" class="btn btn--primary" id="btn-detail-upload">上傳</button>' +
+        '<button type="button" class="btn" id="btn-back">返回</button></div></div>' +
+      '<div class="tabs">' +
+        tabBtn('folders', '日期資料夾', tab) +
+        tabBtn('info', '客戶資訊', tab) +
+        tabBtn('notes', '備註', tab) +
+      '</div><div id="detail-body"></div>';
+
+    $('btn-back').onclick = function () { setPage('customers'); };
+    $('btn-detail-upload').onclick = function () {
+      state.uploadCustomerId = c.id;
+      state.uploadTarget = 'customer';
+      if (state.openFolder) state.uploadDocDate = state.openFolder;
+      setPage('upload');
+    };
+    content.querySelectorAll('.tab').forEach(function (btn) {
+      btn.onclick = function () {
+        state.detailTab = btn.getAttribute('data-tab');
+        renderDetail(content);
+      };
+    });
+  }
+
+  async function ensureCategoryFiles_(dateKey) {
+    var data = state.detailCache;
+    if (!data || !dateKey) return [];
+    data.loadedCategories = data.loadedCategories || {};
+    data.filesByCategory = data.filesByCategory || {};
+    data.filesByDate = data.filesByDate || data.filesByCategory;
+    if (data.loadedCategories[dateKey]) return data.filesByCategory[dateKey] || [];
+    var res = await run('api_listCustomerDateFiles', data.customer.id, dateKey);
+    var files = (res && res.files) || [];
+    data.filesByCategory[dateKey] = files;
+    data.filesByDate[dateKey] = files;
+    data.loadedCategories[dateKey] = true;
+    if (!data.folderMeta) data.folderMeta = {};
+    if (!data.folderMeta[dateKey]) data.folderMeta[dateKey] = { done: false, count: 0 };
+    data.folderMeta[dateKey].count = files.length;
+    data.folderMeta[dateKey].done = files.length > 0;
+    return files;
+  }
+
+  /** 從 folderMeta 取出日期鍵（yyyy-MM-dd） */
+  function getCustomerDates_(folderMeta, fallback) {
+    var src = folderMeta || {};
+    var dates = Object.keys(src).filter(function (k) {
+      return /^\d{4}-\d{2}-\d{2}$/.test(k);
+    }).sort(function (a, b) { return String(b).localeCompare(String(a)); });
+    if (!dates.length && fallback && fallback.length) {
+      dates = fallback.filter(function (k) { return /^\d{4}-\d{2}-\d{2}$/.test(k); });
+    }
+    return dates;
+  }
+
+  function buildDetailFromCache_(id) {
+    var lite = findCachedCustomer_(id);
+    if (!lite) return null;
+    var src = lite.folderMeta || {};
+    var dates = getCustomerDates_(src, lite.dates || []);
+    var folderMeta = {};
+    dates.forEach(function (d) {
+      folderMeta[d] = src[d] ? {
+        done: !!src[d].done,
+        count: Number(src[d].count) || 0
+      } : { done: false, count: 0 };
+    });
+    var filesByCategory = {};
+    dates.forEach(function (d) { filesByCategory[d] = []; });
+    return {
+      customer: Object.assign({}, lite, { folderMeta: folderMeta }),
+      dates: dates,
+      categories: dates,
+      folderMeta: folderMeta,
+      filesByCategory: filesByCategory,
+      filesByDate: filesByCategory,
+      loadedCategories: {},
+      filesLoaded: false
+    };
+  }
+
+  async function renderDetail(content) {
+    var tab = state.detailTab || 'folders';
+    var seq = ++renderSeq_;
+    var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+
+    // 已有相同客戶的詳情快取 → 完全免打伺服器
+    var data = state.detailCache && state.detailCache.customer &&
+      String(state.detailCache.customer.id) === String(state.customerId)
+      ? state.detailCache : null;
+    var cacheSource = data ? 'detailCache'
+      : (findCachedCustomer_(state.customerId) ? 'listCache' : 'server');
+
+    if (!data) data = buildDetailFromCache_(state.customerId);
+    if (data) state.detailCache = data;
+    try {
+      console.log('[DriveDocs]', 'renderDetail', {
+        id: state.customerId, source: cacheSource,
+        hasFolderMeta: !!(data && data.customer && data.customer.folderMeta),
+        dates: (data && (data.dates || data.categories) || []).length
+      });
+    } catch (e) { /* ignore */ }
+
+    if (data) {
+      paintDetailShell_(content, data.customer, tab, data);
+      var body0 = $('detail-body');
+      if (!body0) return;
+      if (tab === 'folders') renderFolderTab(body0, data);
+      else if (tab === 'info') renderInfoTab(body0, data.customer);
+      else renderNotesTab(body0, data.customer);
+      try {
+        var t1 = (window.performance && performance.now) ? performance.now() : Date.now();
+        console.log('[DriveDocs]', 'detail painted in', Math.round(t1 - t0), 'ms · via', cacheSource);
+      } catch (e2) { /* ignore */ }
+      return;
+    }
+
+    // fallback：無列表快取（如深連結），才打一次伺服器
+    content.innerHTML = '<p class="muted soft-load" style="padding:16px">載入客戶…</p>';
+    try {
+      data = await run('api_getCustomer', state.customerId, false);
+    } catch (err) {
+      if (seq !== renderSeq_) return;
+      content.innerHTML = '<div class="card__bd"><p>' + escapeHtml(err.message || err) + '</p></div>';
+      throw err;
+    }
+    if (seq !== renderSeq_) return;
+    data.loadedCategories = {};
+    state.detailCache = data;
+    paintDetailShell_(content, data.customer, tab, data);
+    var body = $('detail-body');
+    if (!body) return;
+    if (tab === 'folders') renderFolderTab(body, data);
+    else if (tab === 'info') renderInfoTab(body, data.customer);
+    else renderNotesTab(body, data.customer);
+  }
+
+  function tabBtn(id, label, current) {
+    return '<button type="button" class="tab' + (current === id ? ' is-active' : '') + '" data-tab="' + id + '">' + label + '</button>';
+  }
+
+  function renderFolderTab(body, data) {
+    var meta = data.folderMeta || {};
+    var loaded = data.loadedCategories || {};
+    var dates = data.dates || data.categories || getCustomerDates_(meta, []);
+    data.dates = dates;
+    data.categories = dates;
+    // 舊客戶或 folderMeta 缺日期：向 Drive 補日期列表（一次）
+    if (!dates.length && data.customer && data.customer.folderId && !data._datesFetched) {
+      data._datesFetched = true;
+      body.innerHTML = '<div class="card__bd"><p class="muted soft-load">讀取日期資料夾…</p></div>';
+      run('api_listCustomerDates', data.customer.id).then(function (res) {
+        var next = (res && res.dates) || [];
+        data.dates = next;
+        data.categories = next;
+        if (res && res.folderMeta) {
+          data.folderMeta = res.folderMeta;
+          if (data.customer) data.customer.folderMeta = res.folderMeta;
+        }
+        if ($('detail-body')) renderFolderTab($('detail-body'), data);
+      }).catch(function (err) {
+        toast(err.message || err, true);
+        body.innerHTML = '<p class="empty">無法讀取日期資料夾</p>';
+      });
+      return;
+    }
+    body.innerHTML =
+      '<p class="upload-hint" style="margin:0 0 8px">依資料日期分夾 · 點日期查看文件</p>' +
+      '<div class="folder-grid">' +
+        (dates.length ? dates.map(function (cat) {
+          var m = meta[cat] || { count: 0 };
+          var files = (data.filesByCategory && data.filesByCategory[cat]) || [];
+          var count = loaded[cat] ? files.length : (m.count != null ? m.count : files.length);
+          var open = state.openFolder === cat;
+          var label = formatDocDateDisplayClient_(cat) || cat;
+          return '<div class="folder-card' + (open ? ' is-open' : '') + '" data-cat="' + escapeHtml(cat) + '">' +
+            '<p class="folder-card__name">' + escapeHtml(label) + '</p>' +
+            '<p class="folder-card__meta">' + count + ' 個文件 · ' + escapeHtml(cat) + '</p>' +
+            '</div>';
+        }).join('') : '<p class="empty" style="grid-column:1/-1">尚無日期資料夾 · 上傳後會依資料日期自動建立</p>') +
+      '</div><section class="card" id="folder-files"></section>';
+
+    body.querySelectorAll('.folder-card').forEach(function (card) {
+      card.addEventListener('click', function () {
+        var cat = card.getAttribute('data-cat');
+        state.openFolder = state.openFolder === cat ? null : cat;
+        renderFolderTab(body, state.detailCache || data);
+        if (state.openFolder && !(loaded[state.openFolder])) {
+          var filesEl = $('folder-files');
+          if (filesEl) {
+            filesEl.innerHTML = '<div class="card__bd"><p class="muted soft-load">載入檔案…</p></div>';
+          }
+          ensureCategoryFiles_(state.openFolder).then(function () {
+            if ($('detail-body') && state.detailCache) {
+              renderFolderTab($('detail-body'), state.detailCache);
+            }
+          }).catch(function (err) {
+            toast(err.message || err, true);
+          });
+        }
+      });
+    });
+    renderOpenFolderFiles($('folder-files'), data);
+  }
+
+  function renderOpenFolderFiles(el, data) {
+    if (!el) return;
+    if (!state.openFolder) {
+      el.innerHTML = '<div class="card__bd"><p class="empty">點選上方資料夾以展開文件列表</p></div>';
+      return;
+    }
+    var loaded = data.loadedCategories || {};
+    if (!loaded[state.openFolder]) {
+      el.innerHTML = '<div class="card__bd"><p class="muted soft-load">載入檔案…</p></div>';
+      return;
+    }
+    var files = (data.filesByCategory && data.filesByCategory[state.openFolder]) || [];
+    el.innerHTML =
+      '<div class="card__hd"><div><h2 class="card__title">' + escapeHtml(formatDocDateDisplayClient_(state.openFolder) || state.openFolder) + '</h2><p class="card__sub">資料日期 ' + escapeHtml(state.openFolder) + '</p></div>' +
+      '<button type="button" class="btn btn--primary btn--sm" id="btn-upload-folder">上傳到此資料夾</button></div>' +
+      '<div class="table-wrap"><table class="table"><thead><tr><th>檔名</th><th>大小</th><th>日期</th><th>操作</th></tr></thead><tbody>' +
+      (files.length ? files.map(function (f) {
+        var dateLabel = f.docDate || formatDate(f.createdAt);
+        return '<tr><td>' + escapeHtml(f.name) + '</td><td>' + escapeHtml(formatSize(f.size)) + '</td><td>' + escapeHtml(dateLabel) + '</td><td>' +
+          '<a class="btn btn--ghost btn--sm" href="' + escapeHtml(f.previewUrl || f.url) + '" target="_blank" rel="noopener">開啟</a> ' +
+          '<button type="button" class="btn btn--danger btn--sm btn-del-file" data-id="' + escapeHtml(f.id) + '" data-name="' + escapeHtml(f.name) + '">刪除</button></td></tr>';
+      }).join('') : '<tr><td colspan="4"><p class="empty">尚無文件</p></td></tr>') +
+      '</tbody></table></div>';
+
+    $('btn-upload-folder').onclick = function () {
+      state.uploadCustomerId = data.customer.id;
+      state.uploadTarget = 'customer';
+      state.uploadDocDate = state.openFolder || todayLocalYmdDigits_();
+      setPage('upload');
+    };
+    el.querySelectorAll('.btn-del-file').forEach(function (btn) {
+      btn.onclick = async function () {
+        if (!confirm('刪除「' + btn.getAttribute('data-name') + '」？')) return;
+        try {
+          await run('api_deleteDocument', {
+            customerId: data.customer.id,
+            fileId: btn.getAttribute('data-id'),
+            fileName: btn.getAttribute('data-name'),
+            docDate: state.openFolder || ''
+          });
+          toast('已刪除');
+          if (state.detailCache) {
+            var cat = state.openFolder;
+            state.detailCache.loadedCategories = state.detailCache.loadedCategories || {};
+            state.detailCache.loadedCategories[cat] = false;
+            await ensureCategoryFiles_(cat);
+            if ($('detail-body')) renderFolderTab($('detail-body'), state.detailCache);
+          } else {
+            render();
+          }
+        } catch (err) { toast(err.message || err, true); }
+      };
+    });
+  }
+
+  function renderInfoTab(body, c) {
+    body.innerHTML = '<section class="card"><div class="card__bd">' +
+      '<div class="field-row"><div class="field"><label>姓名</label><input id="c-name" value="' + escapeHtml(c.name) + '"></div>' +
+      '<div class="field"><label>電話</label><input id="c-phone" value="' + escapeHtml(c.phone || '') + '"></div></div>' +
+      '<div class="field-row"><div class="field"><label>電子郵件</label><input id="c-email" value="' + escapeHtml(c.email || '') + '"></div>' +
+      '<div class="field"><label>生日（民國）</label>' +
+        '<input id="c-birthday" type="text" inputmode="numeric" autocomplete="bday" ' +
+        'placeholder="例如 690808" value="' + escapeHtml(formatBirthdayDisplayClient_(c.birthday)) + '">' +
+        '<p class="upload-hint" style="margin:4px 0 0">民國數字：690808 → 民國69年8月8日</p></div></div>' +
+      '<div class="field-row"><div class="field"><label>性別</label><select id="c-gender"><option value="">請選擇</option><option value="男">男</option><option value="女">女</option><option value="其他">其他</option></select></div>' +
+      '<div class="field"><label>身分證號</label><input id="c-id" value="' + escapeHtml(c.idNumber || '') + '"></div></div>' +
+      '<div class="field"><label>地址</label><input id="c-address" value="' + escapeHtml(c.address || '') + '"></div>' +
+      '<p class="upload-hint">文件筆數：<strong>' + (c.fileCount || 0) + '</strong> · ' +
+        (c.isRenewal ? '<span class="badge badge--renewal">續保</span>' : '<span class="badge badge--new">新件</span>') + '</p>' +
+      '<button type="button" class="btn btn--primary" id="btn-save-info">儲存</button></div></section>';
+    if (c.gender) $('c-gender').value = c.gender;
+    wireBirthdayInput_($('c-birthday'));
+    $('btn-save-info').onclick = async function () {
+      try {
+        await run('api_updateCustomer', c.id, {
+          name: $('c-name').value, phone: $('c-phone').value, email: $('c-email').value,
+          birthday: normalizeBirthdayClient_($('c-birthday').value), gender: $('c-gender').value,
+          idNumber: $('c-id').value.trim(), address: $('c-address').value.trim()
+        });
+        invalidateClientCache_();
+        toast('已儲存');
+        render();
+      } catch (err) { toast(err.message || err, true); }
+    };
+  }
+
+  function renderNotesTab(body, c) {
+    body.innerHTML = '<section class="card"><div class="card__bd">' +
+      '<div class="field"><label>備註</label><textarea id="c-notes" rows="6">' + escapeHtml(c.notes || '') + '</textarea></div>' +
+      '<button type="button" class="btn btn--primary" id="btn-save-notes">儲存備註</button></div></section>';
+    $('btn-save-notes').onclick = async function () {
+      try {
+        await run('api_updateCustomer', c.id, { notes: $('c-notes').value });
+        toast('已儲存');
+      } catch (err) { toast(err.message || err, true); }
+    };
+  }
+
+  async function renderSettings(content) {
+    var pathCustomers = (state.app && state.app.paths && state.app.paths.CUSTOMERS) ||
+      '我的雲端硬碟／客戶資料／客戶／{注音}／{客戶姓名}／{資料日期}／';
+    var pathActivities = (state.app && state.app.paths && state.app.paths.ACTIVITIES) ||
+      activityDrivePathHintClient_();
+    var s = (state.app && state.app.settings) || {};
+    if (!s.rootFolderName || s.birthdayReminderEnabled === undefined) {
+      try { s = await run('api_getSettings'); if (state.app) state.app.settings = s; } catch (e) { /* keep */ }
+    }
+    var bdayOn = !!s.birthdayReminderEnabled;
+    content.innerHTML =
+      '<section class="greeting"><h1>設定</h1><p>Drive 同步、根目錄 · 版本 v' + escapeHtml(appVersion_() || '260813r') + '</p></section>' +
+      '<div class="stack"><section class="card"><div class="card__hd"><div><h2 class="card__title">雲端硬碟路徑</h2>' +
+        '<p class="card__sub">客戶文件只依「資料日期」分夾，不再用文件類型分類</p></div></div><div class="card__bd">' +
+        '<p class="upload-hint">客戶：' + escapeHtml(pathCustomers) + '</p>' +
+        '<p class="upload-hint">本週活動：' + escapeHtml(pathActivities) + '</p>' +
+      '</div></section>' +
+      '<section class="card"><div class="card__bd">' +
+        '<div class="field"><label>根目錄名稱</label><input id="s-root" value="' + escapeHtml(s.rootFolderName) + '"></div>' +
+        '<div class="field"><label>命名規則</label><input id="s-naming" value="' + escapeHtml(s.namingRule) + '"></div>' +
+        '<p class="upload-hint">索引試算表：' + (s.spreadsheetUrl ? '<a href="' + escapeHtml(s.spreadsheetUrl) + '" target="_blank">開啟</a>' : '—') +
+        ' · 根目錄：' + (s.rootFolderUrl ? '<a href="' + escapeHtml(s.rootFolderUrl) + '" target="_blank">開啟</a>' : '—') + '</p>' +
+        '<button type="button" class="btn btn--primary" id="btn-save-settings">儲存</button></div></section>' +
+      '<section class="card"><div class="card__hd"><div><h2 class="card__title">Drive 同步</h2>' +
+        '<p class="card__sub">在 Google Drive 刪除客戶資料夾後，網站索引會自動清除；也可手動立刻同步</p></div></div><div class="card__bd">' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button type="button" class="btn btn--primary" id="btn-sync-drive">立刻同步 Drive</button>' +
+          '<button type="button" class="btn" id="btn-seed">匯入示範資料</button>' +
+        '</div>' +
+        '<p class="upload-hint" id="sync-result" style="margin-top:8px"></p>' +
+      '</div></section>' +
+      '<section class="card"><div class="card__hd"><div><h2 class="card__title">本週壽星提醒</h2>' +
+        '<p class="card__sub">每週一自動寄信到你的 Gmail，列出當週生日客戶</p></div></div><div class="card__bd">' +
+        '<p class="upload-hint">排程：' + escapeHtml(s.birthdayReminderSchedule || '每週一 09:00（台北時間）') +
+        ' · 目前：<strong>' + (bdayOn ? '已啟用' : '未啟用') + '</strong></p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' +
+          '<button type="button" class="btn btn--primary" id="btn-bday-toggle">' + (bdayOn ? '關閉每週提醒' : '啟用每週提醒') + '</button>' +
+          '<button type="button" class="btn" id="btn-bday-send">立刻寄送本週提醒</button>' +
+        '</div></div></section></div>';
+
+    $('btn-save-settings').onclick = async function () {
+      try {
+        await run('api_saveSettings', { rootFolderName: $('s-root').value, namingRule: $('s-naming').value });
+        toast('已儲存');
+        bootDriveMeta();
+      } catch (err) { toast(err.message || err, true); }
+    };
+    $('btn-sync-drive').onclick = async function () {
+      var el = $('sync-result');
+      if (el) el.textContent = '同步中…';
+      try {
+        var res = await run('api_syncDrive', true);
+        invalidateClientCache_();
+        if (el) el.textContent = '已檢查 ' + (res.checked || 0) + ' 位 · 移除 ' + (res.removed || 0) + ' 筆（Drive 已刪）';
+        toast(res.removed ? ('已同步，移除 ' + res.removed + ' 筆') : '已同步，無需移除');
+        setPage('dashboard');
+      } catch (err) {
+        if (el) el.textContent = '';
+        toast(err.message || err, true);
+      }
+    };
+    $('btn-seed').onclick = async function () {
+      try {
+        var res = await run('api_seedDemo');
+        invalidateClientCache_();
+        toast(res.message || '已匯入');
+        setPage('dashboard');
+      } catch (err) { toast(err.message || err, true); }
+    };
+    $('btn-bday-toggle').onclick = async function () {
+      try {
+        if (bdayOn) {
+          await run('api_disableBirthdayReminder');
+          toast('已關閉每週壽星提醒');
+        } else {
+          await run('api_enableBirthdayReminder');
+          toast('已啟用：每週一 09:00 寄信');
+        }
+        renderSettings(content);
+      } catch (err) { toast(err.message || err, true); }
+    };
+    $('btn-bday-send').onclick = async function () {
+      try {
+        var res = await run('api_sendBirthdayReminder', true);
+        toast(res.message || '已處理');
+      } catch (err) { toast(err.message || err, true); }
+    };
+  }
+
+  async function renderSearch(content) {
+    var res = await run('api_search', state.searchQuery || '');
+    content.innerHTML =
+      '<section class="greeting"><h1>搜尋結果</h1><p>' + escapeHtml(state.searchQuery) + '</p></section>' +
+      '<div class="stack"><section class="card"><div class="card__hd"><div><h2 class="card__title">客戶（' + res.customers.length + '）</h2></div></div>' +
+      '<div class="card__bd table-wrap"><table class="table"><tbody>' +
+      (res.customers.length ? res.customers.map(customerRow).join('') : '<tr><td><p class="empty">沒有符合的客戶</p></td></tr>') +
+      '</tbody></table></div></section>' +
+      '<section class="card"><div class="card__hd"><div><h2 class="card__title">文件（' + res.files.length + '）</h2></div></div><div class="card__bd">' +
+      (res.files.length ? '<ul class="activity">' + res.files.map(function (x) {
+        return '<li class="activity__item" data-id="' + escapeHtml(x.customerId) + '"><div class="activity__ico">📄</div><div>' +
+          '<p class="activity__title">' + escapeHtml(x.file.name) + '</p>' +
+          '<p class="activity__desc">' + escapeHtml(x.customerName) + ' · ' + escapeHtml(x.file.docDate || x.file.category || '') + '</p></div></li';
+      }).join('') + '</ul>' : '<p class="empty">沒有符合的文件</p>') +
+      '</div></section></div>';
+    bindCustomerList(content, { customers: res.customers, initials: [] });
+  }
+
+  function openModal(html) {
+    $('modal-root').innerHTML = '<div class="modal-backdrop" id="modal-backdrop"><div class="modal" style="width:min(640px,100%)">' + html + '</div></div>';
+    $('modal-backdrop').onclick = function (e) {
+      if (e.target.id === 'modal-backdrop') closeModal();
+    };
+  }
+  function closeModal() { $('modal-root').innerHTML = ''; }
+
+  function bootDriveMeta() {
+    if (!state.app) return;
+    var s = state.app.settings || {};
+    var meta = $('drive-meta');
+    if (meta) {
+      meta.textContent = ownerDisplay_() + (appVersion_() ? (' · v' + appVersion_()) : '');
+    }
+    var url = s.rootFolderUrl || 'https://drive.google.com';
+    ['drive-link', 'drive-link-mobile'].forEach(function (id) {
+      var link = $(id);
+      if (link) link.href = url;
+    });
+    var emailEl = $('user-email');
+    if (emailEl) {
+      var email = (state.app.user && state.app.user.email) || '';
+      emailEl.textContent = email || '';
+    }
+  }
+
+  function showShell_() {
     $('boot').classList.add('hidden');
-    $('setup').classList.add('hidden');
+    var setup = $('setup');
+    if (setup) {
+      setup.classList.add('hidden');
+      setup.hidden = true;
+    }
     $('shell').classList.remove('hidden');
-    $('user-email').textContent = (app.user && app.user.email) || '';
-    setPage('dashboard');
+    bootDriveMeta();
+    bindChrome();
   }
 
-  function bindShell() {
-    document.querySelectorAll('.nav__item').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        setPage(btn.getAttribute('data-page'));
+  function applyBootPayload_(payload, fromStore) {
+    state.app = payload.app || {};
+    if (payload.appVersion) state.app.appVersion = payload.appVersion;
+    if (payload.activityPathHint) state.app.activityPathHint = payload.activityPathHint;
+    if (payload.paths) state.app.paths = payload.paths;
+    if (payload.weekLabel) state.weekLabel = payload.weekLabel;
+    if (payload.home) rememberHome_(payload.home);
+    if (payload.activities) {
+      state.cache.activities = payload.activities;
+      state.cache.activitiesAt = Date.now();
+    }
+    if (!fromStore) writeBootStore_(payload);
+    if (!fromStore && payload.sync && payload.sync.removed > 0) {
+      toast('已同步 Drive：移除 ' + payload.sync.removed + ' 筆已刪資料夾的客戶');
+    }
+  }
+
+  function paintBootVersion_(extra) {
+    var hint = $('boot-hint');
+    if (!hint) return;
+    var ver = appVersion_() || '260813r';
+    hint.textContent = (extra || '載入中') + ' · v' + ver;
+  }
+
+  async function boot() {
+    try {
+      try { console.log('[DriveDocs] boot · v260813r'); } catch (e) { /* ignore */ }
+      // 立刻顯示介面（不等伺服器）
+      state.app = {
+        appVersion: '260813r',
+        user: { name: '楊以寧', display: '楊以寧', role: '', email: '' },
+        settings: { rootFolderName: '客戶資料', categories: [] },
+        initialized: true
+      };
+      state.page = 'dashboard';
+      paintBootVersion_('載入中');
+      showShell_();
+
+      var stored = readBootStore_();
+      if (stored && stored.app && stored.home) {
+        applyBootPayload_(stored, true);
+        bootDriveMeta();
+        // 同步立刻畫首頁，零等待
+        paintDashboardShell_($('content'), stored.home);
+        requestAnimationFrame(function () {
+          paintDashboardCustomers_($('content'), stored.home);
+          animateBars($('content'));
+        });
+        refreshBootInBackground_();
+        return;
+      }
+
+      // 無快取：先畫空骨架，再打 api_boot
+      paintDashboardShell_($('content'), {
+        dashboard: { totalCustomers: '—', todayOrganized: '—', birthdaysThisWeek: { count: 0, customers: [] } },
+        customers: { customers: [], initials: [] }
+      });
+      await refreshBootInBackground_(true);
+    } catch (err) {
+      $('boot').classList.remove('hidden');
+      $('shell').classList.add('hidden');
+      $('boot').innerHTML = '<p class="boot__brand">DriveDocs</p><p class="boot__hint">' + escapeHtml(err.message || err) + '</p>' +
+        '<p class="boot__hint">若剛更新檔案，請重新「部署 → 新版本」</p>';
+    }
+  }
+
+  function refreshBootInBackground_(awaitable) {
+    var p = run('api_boot').then(function (fresh) {
+      applyBootPayload_(fresh, false);
+      bootDriveMeta();
+      if (state.page === 'dashboard' || !state.page) {
+        state.page = 'dashboard';
+        var content = $('content');
+        paintDashboardShell_(content, fresh.home || state.cache.home);
+        paintDashboardCustomers_(content, fresh.home || state.cache.home);
+        animateBars(content);
+      }
+    }).catch(function (err) {
+      return run('api_getAppState').then(function (app) {
+        if (!app.initialized) return run('api_initialize');
+        return app;
+      }).then(function (app) {
+        state.app = app;
+        return run('api_getHome');
+      }).then(function (home) {
+        rememberHome_(home);
+        bootDriveMeta();
+        state.page = 'dashboard';
+        var content = $('content');
+        paintDashboardShell_(content, home);
+        paintDashboardCustomers_(content, home);
+        animateBars(content);
+      }).catch(function (e2) {
+        $('content').innerHTML = '<div class="card card__bd"><p>' + escapeHtml((err && err.message) || e2.message || e2) +
+          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260813r。</p></div>';
       });
     });
-    $('sidebar-toggle').addEventListener('click', function () {
-      state.sidebarOpen = !state.sidebarOpen;
-      $('sidebar').classList.toggle('is-open', state.sidebarOpen);
+    return p;
+  }
+
+  function bindChrome() {
+    document.querySelectorAll('.menu__item, .navpill__link, .topbar__nav-desktop [data-page], .bottom-nav [data-page], [data-page]').forEach(function (el) {
+      if (el._bound) return;
+      el._bound = true;
+      if (!el.getAttribute('data-page')) return;
+      if (el.closest && el.closest('#content')) return;
+      el.addEventListener('click', function () {
+        var page = el.getAttribute('data-page');
+        setSidebarOpen(false);
+        setPage(page);
+      });
     });
+
+    function toggleDrawer_() {
+      var side = $('sidebar');
+      var isOpen = side && !side.hidden && !side.classList.contains('hidden');
+      setSidebarOpen(!isOpen);
+    }
+
+    var toggle = $('sidebar-toggle');
+    if (toggle) toggle.onclick = toggleDrawer_;
+    var more = $('btn-more-nav');
+    if (more) more.onclick = toggleDrawer_;
+    var closeBtn = $('btn-close-drawer');
+    if (closeBtn) closeBtn.onclick = function () { setSidebarOpen(false); };
+    var backdrop = $('sidebar-backdrop');
+    if (backdrop) backdrop.onclick = function () { setSidebarOpen(false); };
+
     var search = $('global-search');
+    if (!search) return;
+    var timer;
     search.addEventListener('input', function () {
-      clearTimeout(state.searchTimer);
+      clearTimeout(timer);
       var q = search.value.trim();
-      state.searchTimer = setTimeout(function () {
+      timer = setTimeout(function () {
         if (!q) {
-          if (state.page === 'search') setPage('customers');
+          if (state.page === 'search') setPage('dashboard');
           return;
         }
         state.searchQuery = q;
-        setPage('search', { title: '搜尋：' + q });
+        setPage('search');
       }, 280);
-    });
-  }
-
-  function boot() {
-    bindShell();
-    run('api_getAppState').then(function (app) {
-      state.app = app;
-      if (!app.initialized) showSetup(app);
-      else enterApp(app);
-    }).catch(function (err) {
-      $('boot').innerHTML =
-        '<p class="boot__brand">DriveDocs</p>' +
-        '<p class="boot__hint">' + escapeHtml(err.message || err) + '</p>';
     });
   }
 
