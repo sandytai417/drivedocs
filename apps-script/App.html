@@ -2161,7 +2161,7 @@
       (res.files.length ? '<ul class="activity">' + res.files.map(function (x) {
         return '<li class="activity__item" data-id="' + escapeHtml(x.customerId) + '"><div class="activity__ico">📄</div><div>' +
           '<p class="activity__title">' + escapeHtml(x.file.name) + '</p>' +
-          '<p class="activity__desc">' + escapeHtml(x.customerName) + ' · ' + escapeHtml(x.file.docDate || x.file.category || '') + '</p></div></li';
+          '<p class="activity__desc">' + escapeHtml(x.customerName) + ' · ' + escapeHtml(x.file.docDate || x.file.category || '') + '</p></div></li>';
       }).join('') + '</ul>' : '<p class="empty">沒有符合的文件</p>') +
       '</div></section></div>';
     bindCustomerList(content, { customers: res.customers, initials: [] });
