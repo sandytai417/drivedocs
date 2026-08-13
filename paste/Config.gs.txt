@@ -6,7 +6,7 @@
 
 var CONFIG = {
   APP_NAME: 'DriveDocs',
-  APP_VERSION: '260813z',
+  APP_VERSION: '260814a',
   TAGLINE: 'Organize Client Documents Directly in Google Drive.',
   /** 系統擁有者（私人單人版）— 僅顯示姓名，不含職稱 */
   OWNER_NAME: '楊以寧',
@@ -70,5 +70,9 @@ function setProp_(key, value) {
 }
 
 function isInitialized() {
-  return getProp_(CONFIG.PROP_KEYS.INITIALIZED) === 'true';
+  try {
+    return getProp_(CONFIG.PROP_KEYS.INITIALIZED) === 'true';
+  } catch (e) {
+    return false;
+  }
 }

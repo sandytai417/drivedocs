@@ -222,7 +222,7 @@ function createCustomerFolderTree(customerName, metadata) {
   if (!customerFolder) customerFolder = zhFolder.createFolder(customerName);
   else customerFolder = moveFolderInto_(customerFolder, zhFolder);
 
-  writeMetadata_(customerFolder, metadata || {});
+  try { writeMetadata_(customerFolder, metadata || {}); } catch (eMeta) { /* 夾已建好即可 */ }
   return {
     folderId: customerFolder.getId(),
     zhuyin: zhuyin
@@ -488,8 +488,25 @@ function requireLiveCustomerFolder_(tree, customerName) {
 function isZhuyinKeyFolder_(name) {
   name = String(name || '').trim();
   if (!name || name === '客戶') return false;
+  if (name === '#') return true;
   if (typeof ZHUYIN_ORDER !== 'undefined' && ZHUYIN_ORDER.indexOf(name) >= 0) return true;
-  return /^[ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙㄧㄨㄩㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ#]$/.test(name);
+  return /^[ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙㄧㄨㄩㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ]$/.test(name);
+}
+
+function migrateOneCustomerFolder_(folder, root) {
+  if (!folder || !root) return false;
+  var name = String(folder.getName() || '').trim();
+  if (!name) return false;
+  var zhFolder = findOrCreateSubfolder_(root, resolveZhuyinKey_(name));
+  var parent = getImmediateParentFolder_(folder);
+  if (parent && parent.getId() === zhFolder.getId()) return false;
+  moveFolderInto_(folder, zhFolder);
+  return true;
+}
+
+function shouldMigrateNameFolder_(folder, name, knownNames) {
+  if (knownNames && knownNames[name]) return true;
+  return looksLikeCustomerFolder_(folder);
 }
 
 /** 把誤放在 客戶資料／姓名 或 客戶／… 的姓名夾搬進 客戶資料／注音／姓名 */
@@ -505,22 +522,6 @@ function migrateCustomerFoldersIntoZhuyin_() {
     }
   } catch (eSheet) { /* ignore */ }
 
-  function migrateOne_(folder) {
-    if (!folder) return;
-    var name = String(folder.getName() || '').trim();
-    if (!name) return;
-    var zhFolder = findOrCreateSubfolder_(root, resolveZhuyinKey_(name));
-    var parent = getImmediateParentFolder_(folder);
-    if (parent && parent.getId() === zhFolder.getId()) return;
-    moveFolderInto_(folder, zhFolder);
-    moved++;
-  }
-
-  function shouldMigrateNameFolder_(folder, name) {
-    if (knownNames[name]) return true;
-    return looksLikeCustomerFolder_(folder);
-  }
-
   var oldBucket = findNamedChildFolder_(root, '客戶');
   if (oldBucket) {
     var bucketKids = [];
@@ -535,10 +536,14 @@ function migrateCustomerFoldersIntoZhuyin_() {
         var nit = child.getFolders();
         while (nit.hasNext()) names.push(nit.next());
         for (var n = 0; n < names.length; n++) {
-          try { if (!names[n].isTrashed()) migrateOne_(names[n]); } catch (e2) { /* ignore */ }
+          try {
+            if (!names[n].isTrashed() && migrateOneCustomerFolder_(names[n], root)) moved++;
+          } catch (e2) { /* ignore */ }
         }
-      } else if (!isDateFolderName_(cn) && shouldMigrateNameFolder_(child, cn)) {
-        migrateOne_(child);
+      } else if (!isDateFolderName_(cn) && shouldMigrateNameFolder_(child, cn, knownNames)) {
+        try {
+          if (migrateOneCustomerFolder_(child, root)) moved++;
+        } catch (e3) { /* ignore */ }
       }
     }
   }
@@ -548,10 +553,14 @@ function migrateCustomerFoldersIntoZhuyin_() {
   while (rit.hasNext()) rootKids.push(rit.next());
   for (var d = 0; d < rootKids.length; d++) {
     var rk = rootKids[d];
-    try { if (rk.isTrashed()) continue; } catch (e3) { continue; }
+    try { if (rk.isTrashed()) continue; } catch (e4) { continue; }
     var rn = String(rk.getName() || '');
     if (rn === '客戶' || isZhuyinKeyFolder_(rn) || isDateFolderName_(rn)) continue;
-    if (shouldMigrateNameFolder_(rk, rn)) migrateOne_(rk);
+    if (shouldMigrateNameFolder_(rk, rn, knownNames)) {
+      try {
+        if (migrateOneCustomerFolder_(rk, root)) moved++;
+      } catch (e5) { /* ignore */ }
+    }
   }
   return moved;
 }
@@ -583,9 +592,12 @@ function collectCustomerFoldersUnder_(parent, out) {
   }
 }
 
-/** 只收錄 客戶資料／{注音}／{姓名}（掃描前會把舊位置的姓名夾搬進注音夾） */
-function listCustomerFoldersFromDrive_() {
-  try { migrateCustomerFoldersIntoZhuyin_(); } catch (eMig) { /* keep listing */ }
+/** 只收錄 客戶資料／{注音}／{姓名}（以及尚未搬移的舊路徑 客戶／注音／姓名） */
+function listCustomerFoldersFromDrive_(opt) {
+  opt = opt || {};
+  if (opt.migrate) {
+    try { migrateCustomerFoldersIntoZhuyin_(); } catch (eMig) { /* 搬夾失敗仍列出目前位置 */ }
+  }
   var out = [];
   var root = getRootFolder_();
   collectCustomerFoldersUnder_(root, out);
@@ -626,7 +638,7 @@ function listCustomerFoldersFromDriveCached_(force) {
       return cached.folders;
     }
   }
-  var folders = listCustomerFoldersFromDrive_();
+  var folders = listCustomerFoldersFromDrive_({ migrate: !!force });
   var wrapped = { folders: folders, at: Date.now() };
   cacheSet_('driveFolders_v1', wrapped);
   sharedPutJson_('driveFolders_v1', wrapped, 30);
@@ -651,33 +663,44 @@ function filterRowsWithDriveFolder_(rows) {
 }
 
 function rewriteCustomersSheet_(objects) {
-  var sh = getSheet_(CONFIG.SHEETS.CUSTOMERS);
-  var lastCol = 1;
-  try { lastCol = Math.max(1, sh.getLastColumn()); } catch (e) { lastCol = (CONFIG.CUSTOMER_HEADERS || []).length || 1; }
-  var headers = sh.getRange(1, 1, 1, lastCol).getValues()[0];
-  if (!headers || !headers.length || !String(headers[0] || '').trim()) {
-    headers = (CONFIG.CUSTOMER_HEADERS || []).slice();
-  }
-  var values = [headers];
-  for (var i = 0; i < (objects || []).length; i++) {
-    var obj = objects[i] || {};
-    var row = [];
-    for (var j = 0; j < headers.length; j++) {
-      var h = headers[j];
-      if (!h) {
-        row.push('');
-        continue;
-      }
-      var v = obj[h];
-      if (v === undefined || v === null) row.push('');
-      else if (Object.prototype.toString.call(v) === '[object Date]') row.push(v);
-      else if (typeof v === 'object') row.push(JSON.stringify(v));
-      else row.push(v);
+  var lock = null;
+  try {
+    lock = LockService.getScriptLock();
+    lock.waitLock(15000);
+  } catch (eLock) { lock = null; }
+  try {
+    var sh = getSheet_(CONFIG.SHEETS.CUSTOMERS);
+    var lastCol = 1;
+    try { lastCol = Math.max(1, sh.getLastColumn()); } catch (e) { lastCol = (CONFIG.CUSTOMER_HEADERS || []).length || 1; }
+    var headers = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+    if (!headers || !headers.length || !String(headers[0] || '').trim()) {
+      headers = (CONFIG.CUSTOMER_HEADERS || []).slice();
     }
-    values.push(row);
+    var values = [headers];
+    for (var i = 0; i < (objects || []).length; i++) {
+      var obj = objects[i] || {};
+      var row = [];
+      for (var j = 0; j < headers.length; j++) {
+        var h = headers[j];
+        if (!h) {
+          row.push('');
+          continue;
+        }
+        var v = obj[h];
+        if (v === undefined || v === null) row.push('');
+        else if (Object.prototype.toString.call(v) === '[object Date]') row.push(v);
+        else if (typeof v === 'object') row.push(JSON.stringify(v));
+        else row.push(v);
+      }
+      values.push(row);
+    }
+    sh.clearContents();
+    sh.getRange(1, 1, values.length, headers.length).setValues(values);
+  } finally {
+    if (lock) {
+      try { lock.releaseLock(); } catch (eRel) { /* ignore */ }
+    }
   }
-  sh.clearContents();
-  sh.getRange(1, 1, values.length, headers.length).setValues(values);
 }
 
 /**
