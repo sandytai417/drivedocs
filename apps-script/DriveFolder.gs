@@ -330,9 +330,6 @@ function requireLiveCustomerFolder_(tree, customerName) {
   if (!tree || !String(tree.folderId || '').trim()) {
     throw new Error('無法在 Drive 建立「' + name + '」資料夾，未寫入客戶列表');
   }
-  if (!folderExists_(tree.folderId)) {
-    throw new Error('Drive 裡找不到「' + name + '」資料夾，未寫入客戶列表');
-  }
   return tree;
 }
 
@@ -411,6 +408,7 @@ function filterRowsWithDriveFolder_(rows) {
   var idSet = liveFolderIdSet_();
   var out = [];
   for (var i = 0; i < rows.length; i++) {
+    if (typeof isFabricatedCustomerRow_ === 'function' && isFabricatedCustomerRow_(rows[i])) continue;
     var fid = String(rows[i].folderId || '').trim();
     if (!fid) continue;
     if (idSet && !idSet[fid]) continue;
@@ -420,8 +418,8 @@ function filterRowsWithDriveFolder_(rows) {
 }
 
 /**
- * 同步：Drive 沒有的夾 → 從索引移除；Drive 裡真實的姓名夾 → 才加入列表。
- * 不虛構客戶。有短快取，避免每次開啟都掃全部。
+ * 同步：從索引移除虛構示範列，以及 Drive 已刪的資料夾。
+ * 不掃整個 Drive 樹（避免又慢又把示範夾加回來）。
  * @param {{force?:boolean}} opt
  * @return {{removed:number, checked:number, imported:number, ids:string[]}}
  */
@@ -433,6 +431,9 @@ function syncCustomersWithDrive_(opt) {
       return cached.result || { removed: 0, checked: 0, imported: 0, ids: [] };
     }
   }
+
+  var demoRemoved = 0;
+  try { demoRemoved = purgeFabricatedCustomersFromIndex_(); } catch (e0) { demoRemoved = 0; }
 
   var rows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
   var removedIds = [];
@@ -458,68 +459,17 @@ function syncCustomersWithDrive_(opt) {
     }
   }
 
-  var imported = 0;
-  var driveFolders = [];
-  try { driveFolders = listCustomerFoldersFromDrive_(); } catch (eWalk) { driveFolders = []; }
-
-  var remaining = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
-  var byFolderId = {};
-  var byName = {};
-  for (var r = 0; r < remaining.length; r++) {
-    var fid2 = String(remaining[r].folderId || '').trim();
-    var nm = String(remaining[r].name || '').trim();
-    if (fid2) byFolderId[fid2] = true;
-    if (nm) byName[nm] = true;
-  }
-
-  var now = nowIso_();
-  var folderMeta = JSON.stringify(defaultFolderMeta_(getCategoryTemplate_()));
-  for (var d = 0; d < driveFolders.length; d++) {
-    var df = driveFolders[d];
-    var dfId = String(df.folderId || '').trim();
-    var dfName = String(df.name || '').trim();
-    if (!dfId || !dfName) continue;
-    if (byFolderId[dfId] || byName[dfName]) continue;
-    var newId = newId_();
-    appendObject_(CONFIG.SHEETS.CUSTOMERS, {
-      id: newId,
-      name: dfName,
-      phone: '',
-      email: '',
-      birthday: '',
-      gender: '',
-      idNumber: '',
-      address: '',
-      tags: '[]',
-      notes: '',
-      folderId: dfId,
-      folderMeta: folderMeta,
-      createdAt: now,
-      updatedAt: now,
-      completion: 0,
-      status: 'not_started',
-      fileCount: 0,
-      zhuyin: df.zhuyin || (typeof getZhuyinInitial === 'function' ? getZhuyinInitial(dfName) : '')
-    });
-    byFolderId[dfId] = true;
-    byName[dfName] = true;
-    liveIds.push(dfId);
-    imported++;
-    try {
-      logActivity_(newId, dfName, 'sync_import', '從 Drive 資料夾加入客戶列表 · ' + dfName);
-    } catch (e3) { /* ignore */ }
-  }
-
-  if (removedIds.length || imported) {
+  if (removedIds.length || demoRemoved) {
     invalidateSheetCache_(CONFIG.SHEETS.CUSTOMERS);
   }
 
   cacheLiveFolderIds_(liveIds);
 
   var result = {
-    removed: removedIds.length,
+    removed: removedIds.length + demoRemoved,
     checked: checked,
-    imported: imported,
+    imported: 0,
+    demoRemoved: demoRemoved,
     ids: removedIds
   };
   sharedPutJson_('driveSyncResult_v1', { at: Date.now(), result: result }, 60);

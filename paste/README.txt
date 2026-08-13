@@ -1,10 +1,11 @@
-DriveDocs 可複製原始檔（v260813u）
+DriveDocs 可複製原始檔（v260813v）
 ================================
-路徑：我的雲端硬碟／客戶資料／{注音}／{姓名}／{民國日期}
-例：客戶資料／ㄉ／戴**／1150813
-畫面只留「保單」一張卡。
-客戶列表只顯示 Drive 裡實際存在的姓名資料夾，不虛構客戶。
+會自動從列表移除舊示範客戶（王大明、白雅婷等）。
+啟動不掃 Drive，加快載入。
 
 每個 *.txt 就是 Apps Script 要貼上的完整內容。
 檔名去掉 .txt 就是 Apps Script 裡的檔名。
-貼完請部署新版本。
+這次至少要覆蓋：
+  Config.gs、DemoData.gs、DriveFolder.gs、Setting.gs
+  DashboardService.gs、Utils.gs、App.html、Index.html
+貼完請部署 → 新版本。畫面上應顯示 v260813v。

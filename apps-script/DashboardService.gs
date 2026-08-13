@@ -67,11 +67,11 @@ function customerFromRowHomeFast_(row) {
 }
 
 function getHomePayload_() {
-  var cached = sharedGetJson_('homePayload_v6');
+  var cached = sharedGetJson_('homePayload_v7');
   if (cached && cached.dashboard && cached.customers) {
     return cached;
   }
-  var mem = cacheGet_('homePayload_v6');
+  var mem = cacheGet_('homePayload_v7');
   if (mem && mem.dashboard && mem.customers) return mem;
 
   var categories = getCategoryTemplate_();
@@ -110,16 +110,12 @@ function getHomePayload_() {
       phone: c.phone,
       birthday: c.birthday,
       gender: c.gender,
-      idNumber: c.idNumber,
-      address: c.address,
       updatedAt: c.updatedAt,
       completion: c.completion,
-      status: c.status,
       fileCount: c.fileCount,
       isRenewal: c.isRenewal,
       zhuyin: c.zhuyin,
-      folderId: c.folderId || '',
-      folderMeta: c.folderMeta || {}
+      folderId: c.folderId || ''
     };
   });
 
@@ -145,8 +141,8 @@ function getHomePayload_() {
       initials: ZHUYIN_ORDER.filter(function (z) { return z !== '#'; })
     }
   };
-  cacheSet_('homePayload_v6', payload);
-  sharedPutJson_('homePayload_v6', payload, 300);
+  cacheSet_('homePayload_v7', payload);
+  sharedPutJson_('homePayload_v7', payload, 300);
   return payload;
 }
 

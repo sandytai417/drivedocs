@@ -76,18 +76,21 @@ function invalidateSheetCache_(sheetName) {
   cacheDel_('homePayload_v4');
   cacheDel_('homePayload_v5');
   cacheDel_('homePayload_v6');
+  cacheDel_('homePayload_v7');
   sharedRemove_('homePayload');
   sharedRemove_('homePayload_v2');
   sharedRemove_('homePayload_v3');
   sharedRemove_('homePayload_v4');
   sharedRemove_('homePayload_v5');
   sharedRemove_('homePayload_v6');
+  sharedRemove_('homePayload_v7');
   sharedRemove_('bootPayload');
   sharedRemove_('bootPayload_v2');
   sharedRemove_('bootPayload_v3');
   sharedRemove_('bootPayload_v4');
   sharedRemove_('bootPayload_v5');
   sharedRemove_('bootPayload_v6');
+  sharedRemove_('bootPayload_v7');
   sharedRemove_('driveSyncResult_v1');
   sharedRemove_('liveFolderIds_v1');
 }

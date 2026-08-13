@@ -206,8 +206,8 @@ function ensureReady_() {
  * 前端冷啟動只打這支，避免 api_getAppState → api_getHome 雙 round-trip
  */
 function bootWorkspace() {
-  // 整包 boot 快取：重複開啟幾乎零等待（不掃 Drive，加快載入）
-  var cachedBoot = sharedGetJson_('bootPayload_v6');
+  // 整包 boot 快取：重複開啟幾乎零等待（不掃 Drive）
+  var cachedBoot = sharedGetJson_('bootPayload_v7');
   if (cachedBoot && cachedBoot.app && cachedBoot.home) {
     return cachedBoot;
   }
@@ -225,35 +225,28 @@ function bootWorkspace() {
     }
   }
 
-  // 畫面只留保單
-  try {
-    setSetting('categories', ['保單']);
-  } catch (eCat) { /* ignore */ }
+  // 啟動只清試算表裡的虛構示範列，不掃 Drive
+  try { purgeFabricatedCustomersFromIndex_(); } catch (ePurge) { /* ignore */ }
 
   var app = getAppState();
   var home = null;
   try { home = getHomePayload_(); } catch (e) { home = null; }
-  var activities = null;
-  try { activities = listActivities(); } catch (eA) { activities = null; }
-
-  var weekLabel = '';
-  try { weekLabel = currentWeekLabel_(); } catch (e2) { weekLabel = ''; }
-  var activityPathHint = '';
-  try { activityPathHint = activityDrivePathHint_(); } catch (e3) { activityPathHint = ''; }
 
   var payload = {
     app: app,
     home: home,
-    activities: activities,
-    weekLabel: weekLabel,
-    activityPathHint: activityPathHint,
+    activities: null,
+    weekLabel: '',
+    activityPathHint: '',
     appVersion: (CONFIG && CONFIG.APP_VERSION) || '',
     paths: (CONFIG && CONFIG.DRIVE_PATHS) || {
       CUSTOMERS: '我的雲端硬碟／客戶資料／{注音}／{客戶姓名}／{資料日期}',
       ACTIVITIES: '我的雲端硬碟／{年}／{N}月活動／{Y}年{M}月第W週活動'
     }
   };
-  sharedPutJson_('bootPayload_v6', payload, 180);
+  try { payload.weekLabel = currentWeekLabel_(); } catch (e2) { /* keep empty */ }
+  try { payload.activityPathHint = activityDrivePathHint_(); } catch (e3) { /* keep empty */ }
+  sharedPutJson_('bootPayload_v7', payload, 180);
   return payload;
 }
 
