@@ -5,14 +5,14 @@
 function uploadDocument(payload) {
   payload = payload || {};
   var customerId = payload.customerId;
-  var category = payload.category || defaultDocCategory_();
+  var category = payload.category || '保單';
   var fileName = payload.fileName;
   var mimeType = payload.mimeType || 'application/octet-stream';
   var base64Data = payload.base64Data;
   var docDate = normalizeDocDate_(payload.docDate || payload.dataDate || payload.date);
 
   if (!customerId) throw new Error('缺少客戶');
-  if (!category) throw new Error('請選擇文件類型');
+  if (!category) category = '保單';
   if (!fileName || !base64Data) throw new Error('缺少檔案');
 
   var detail = getCustomer(customerId, { skipFiles: true });
@@ -47,13 +47,13 @@ function uploadDocument(payload) {
 function importDocument(payload) {
   payload = payload || {};
   var customerId = payload.customerId;
-  var category = payload.category || defaultDocCategory_();
+  var category = payload.category || '保單';
   var mode = payload.mode === 'copy' ? 'copy' : (payload.mode === 'shortcut' ? 'shortcut' : 'move');
   var fileId = payload.fileId || parseDriveFileId_(payload.driveUrl || payload.url || '');
   var docDate = normalizeDocDate_(payload.docDate || payload.dataDate || payload.date);
 
   if (!customerId) throw new Error('缺少客戶');
-  if (!category) throw new Error('請選擇文件類型');
+  if (!category) category = '保單';
   if (!fileId) throw new Error('請提供雲端檔案連結或檔案 ID');
 
   var detail = getCustomer(customerId, { skipFiles: true });
@@ -104,17 +104,17 @@ function uploadDocuments(payload) {
 
   for (var i = 0; i < items.length; i++) {
     var it = items[i] || {};
-    var category = it.category || defaultDocCategory_();
+    var category = it.category || '保單';
     var fileName = it.fileName;
     var base64Data = it.base64Data;
     var docDate = normalizeDocDate_(it.docDate || it.dataDate || it.date);
     try {
       if (!fileName || !base64Data) throw new Error('缺少檔案');
       validateUpload_(fileName, it.mimeType);
-      var key = category + '|' + docDate;
+      var key = docDate;
       var dateFolder = folderCache[key];
       if (!dateFolder) {
-        dateFolder = ensureCategoryDateFolder_(c.folderId, category, docDate);
+        dateFolder = ensureDateFolder_(c.folderId, docDate);
         folderCache[key] = dateFolder;
       }
       var bytes = Utilities.base64Decode(base64Data);
@@ -171,7 +171,7 @@ function importDocuments(payload) {
 
   for (var i = 0; i < items.length; i++) {
     var it = items[i] || {};
-    var category = it.category || defaultDocCategory_();
+    var category = it.category || '保單';
     var mode = it.mode === 'copy' ? 'copy' : (it.mode === 'shortcut' ? 'shortcut' : 'move');
     var fileId = it.fileId || parseDriveFileId_(it.driveUrl || it.url || '');
     var docDate = normalizeDocDate_(it.docDate || it.dataDate || it.date);
@@ -183,10 +183,10 @@ function importDocuments(payload) {
         throw new Error('請選擇檔案（不支援整個資料夾）');
       }
 
-      var key = category + '|' + docDate;
+      var key = docDate;
       var dateFolder = folderCache[key];
       if (!dateFolder) {
-        dateFolder = ensureCategoryDateFolder_(c.folderId, category, docDate);
+        dateFolder = ensureDateFolder_(c.folderId, docDate);
         folderCache[key] = dateFolder;
       }
 

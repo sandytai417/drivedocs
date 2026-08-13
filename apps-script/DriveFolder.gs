@@ -1,8 +1,8 @@
 /**
  * DriveDocs — Drive 資料夾層
- * 路徑：客戶資料／客戶／{注音}／{客戶姓名}／{文件類型}／{資料日期}／檔案
- * （畫面依文件類型分卡；Drive 內再依資料日期分子夾）
- * Drive 是資料庫：刪除客戶資料夾後，可用同步清除網站索引。
+ * 路徑：客戶資料／{注音}／{客戶姓名}／{民國日期}／檔案
+ * 例：客戶資料／ㄉ／戴**／1150813
+ * 畫面只顯示「保單」一張卡；Drive 不建分類夾。
  */
 
 function findOrCreateSubfolder_(parent, name) {
@@ -30,22 +30,34 @@ function getRootFolder_() {
   return folder;
 }
 
-/** 客戶資料／客戶 */
+/** 客戶資料（不再多一層「客戶」） */
 function getCustomersBucketFolder_() {
-  var root = getRootFolder_();
-  return findOrCreateSubfolder_(root, CONFIG.CUSTOMERS_BUCKET || '客戶');
+  return getRootFolder_();
 }
 
 /**
- * 建立客戶資料夾：客戶資料／客戶／{注音}／{姓名}
- * 不預建分類夾（上傳時才建），加快新增客戶。
+ * 建立客戶資料夾：客戶資料／{注音}／{姓名}
+ * 相容舊路徑：客戶資料／客戶／{注音}／{姓名}
  */
 function createCustomerFolderTree(customerName, metadata) {
-  var bucket = getCustomersBucketFolder_();
+  var root = getRootFolder_();
   var zhuyin = getZhuyinInitial(customerName);
-  var zhFolder = findOrCreateSubfolder_(bucket, zhuyin);
+  var zhFolder = findOrCreateSubfolder_(root, zhuyin);
   var existing = zhFolder.getFoldersByName(customerName);
-  var customerFolder = existing.hasNext() ? existing.next() : zhFolder.createFolder(customerName);
+  var customerFolder = null;
+  if (existing.hasNext()) {
+    customerFolder = existing.next();
+  } else {
+    var oldBucketIt = root.getFoldersByName('客戶');
+    if (oldBucketIt.hasNext()) {
+      var oldZhIt = oldBucketIt.next().getFoldersByName(zhuyin);
+      if (oldZhIt.hasNext()) {
+        var oldCustIt = oldZhIt.next().getFoldersByName(customerName);
+        if (oldCustIt.hasNext()) customerFolder = oldCustIt.next();
+      }
+    }
+    if (!customerFolder) customerFolder = zhFolder.createFolder(customerName);
+  }
   writeMetadata_(customerFolder, metadata || {});
   return {
     folderId: customerFolder.getId(),
@@ -77,7 +89,7 @@ function renameCustomerFolder(folderId, newName) {
   var parent = parents.hasNext() ? parents.next() : null;
   if (parent) {
     var grandParents = parent.getParents();
-    var bucket = grandParents.hasNext() ? grandParents.next() : getCustomersBucketFolder_();
+    var bucket = grandParents.hasNext() ? grandParents.next() : getRootFolder_();
     var targetZh = findOrCreateSubfolder_(bucket, newZh);
     if (targetZh.getId() !== parent.getId()) {
       try {
@@ -113,22 +125,43 @@ function normalizeDocDate_(raw) {
   return todayStr_();
 }
 
+function isRocDateFolderName_(name) {
+  var s = String(name || '');
+  if (/^\d{7}$/.test(s)) {
+    var y = Number(s.slice(0, 3));
+    var mo = Number(s.slice(3, 5));
+    var d = Number(s.slice(5, 7));
+    return y >= 1 && y <= 200 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31;
+  }
+  if (/^\d{6}$/.test(s)) {
+    var y2 = Number(s.slice(0, 2));
+    var mo2 = Number(s.slice(2, 4));
+    var d2 = Number(s.slice(4, 6));
+    return y2 >= 1 && y2 <= 99 && mo2 >= 1 && mo2 <= 12 && d2 >= 1 && d2 <= 31;
+  }
+  return false;
+}
+
 function isDateFolderName_(name) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(name || ''));
+  var s = String(name || '');
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) || isRocDateFolderName_(s);
 }
 
-/** 客戶／{文件類型}／{資料日期} */
-function ensureCategoryDateFolder_(customerFolderId, category, docDate) {
-  var catName = String(category || '').trim() || defaultDocCategory_();
-  var dateName = normalizeDocDate_(docDate);
-  var customerFolder = DriveApp.getFolderById(customerFolderId);
-  var catFolder = findOrCreateSubfolder_(customerFolder, catName);
-  return findOrCreateSubfolder_(catFolder, dateName);
-}
-
-/** 相容舊呼叫：若誤當日期夾用，仍建分類／日期 */
+/** 客戶／{民國日期} 例如 1150813；相容舊西元資料夾 */
 function ensureDateFolder_(customerFolderId, docDate) {
-  return ensureCategoryDateFolder_(customerFolderId, defaultDocCategory_(), docDate);
+  var ymd = normalizeDocDate_(docDate);
+  var roc = typeof rocFolderNameFromYmd_ === 'function' ? rocFolderNameFromYmd_(ymd) : ymd.replace(/-/g, '');
+  var customerFolder = DriveApp.getFolderById(customerFolderId);
+  var rocIt = customerFolder.getFoldersByName(roc);
+  if (rocIt.hasNext()) return rocIt.next();
+  var ymdIt = customerFolder.getFoldersByName(ymd);
+  if (ymdIt.hasNext()) return ymdIt.next();
+  return customerFolder.createFolder(roc);
+}
+
+/** 舊名相容：忽略分類，只建日期夾 */
+function ensureCategoryDateFolder_(customerFolderId, category, docDate) {
+  return ensureDateFolder_(customerFolderId, docDate);
 }
 
 function pushFolderFiles_(folder, categoryName, dateName, result, seen) {
@@ -146,80 +179,49 @@ function pushFolderFiles_(folder, categoryName, dateName, result, seen) {
 }
 
 /**
- * 列出某分類下所有檔案（分類／日期／檔；相容日期夾直接在客戶根目錄）
+ * 列出客戶所有檔案（日期夾；相容舊「分類／日期」）
  */
-function listCategoryFiles(customerFolderId, categoryName) {
-  categoryName = String(categoryName || '').trim();
+function listAllCustomerFiles(customerFolderId) {
   var customerFolder = DriveApp.getFolderById(customerFolderId);
   var result = [];
   var seen = {};
-
-  var subs = customerFolder.getFoldersByName(categoryName);
+  var subs = customerFolder.getFolders();
   while (subs.hasNext()) {
-    var cat = subs.next();
-    if (cat.isTrashed()) continue;
-    pushFolderFiles_(cat, categoryName, '', result, seen);
-    var dates = cat.getFolders();
-    while (dates.hasNext()) {
-      var d = dates.next();
+    var sub = subs.next();
+    if (sub.isTrashed()) continue;
+    var name = sub.getName();
+    if (isDateFolderName_(name)) {
+      pushFolderFiles_(sub, '保單', name, result, seen);
+      continue;
+    }
+    var nested = sub.getFolders();
+    var hadDate = false;
+    while (nested.hasNext()) {
+      var d = nested.next();
       if (d.isTrashed()) continue;
-      var dateName = isDateFolderName_(d.getName()) ? d.getName() : '';
-      pushFolderFiles_(d, categoryName, dateName, result, seen);
+      if (isDateFolderName_(d.getName())) {
+        hadDate = true;
+        pushFolderFiles_(d, '保單', d.getName(), result, seen);
+      }
+    }
+    if (!hadDate) {
+      pushFolderFiles_(sub, '保單', '', result, seen);
     }
   }
-
+  pushFolderFiles_(customerFolder, '保單', '', result, seen);
   result.sort(function (a, b) {
     return String(b.updatedAt).localeCompare(String(a.updatedAt));
   });
   return result;
 }
 
-function listAllCustomerFiles(customerFolderId) {
-  var grouped = listCustomerFilesGrouped_(customerFolderId);
-  var all = [];
-  Object.keys(grouped).forEach(function (k) {
-    all = all.concat(grouped[k] || []);
-  });
-  return all;
+/** 畫面只有保單：點開即列出全部檔案 */
+function listCategoryFiles(customerFolderId, categoryName) {
+  return listAllCustomerFiles(customerFolderId);
 }
 
-/** 依文件類型分組；日期-only 舊夾併入「其他」 */
 function listCustomerFilesGrouped_(customerFolderId) {
-  var categories = getCategoryTemplate_();
-  var grouped = {};
-  categories.forEach(function (cat) {
-    grouped[cat] = listCategoryFiles(customerFolderId, cat);
-  });
-
-  var otherName = '';
-  for (var i = 0; i < categories.length; i++) {
-    if (String(categories[i]).indexOf('其他') >= 0) {
-      otherName = categories[i];
-      break;
-    }
-  }
-  if (!otherName && categories.length) otherName = categories[categories.length - 1];
-  if (!otherName) return grouped;
-
-  var customerFolder = DriveApp.getFolderById(customerFolderId);
-  var seen = {};
-  Object.keys(grouped).forEach(function (k) {
-    (grouped[k] || []).forEach(function (f) { seen[f.id] = true; });
-  });
-  var leftovers = [];
-  var subs = customerFolder.getFolders();
-  while (subs.hasNext()) {
-    var sub = subs.next();
-    if (sub.isTrashed()) continue;
-    var name = sub.getName();
-    if (categories.indexOf(name) >= 0) continue;
-    if (!isDateFolderName_(name)) continue;
-    pushFolderFiles_(sub, otherName, name, leftovers, seen);
-  }
-  if (leftovers.length) {
-    grouped[otherName] = (grouped[otherName] || []).concat(leftovers);
-  }
-  return grouped;
+  return { '保單': listAllCustomerFiles(customerFolderId) };
 }
 
 function fileToDto_(f, category) {
@@ -252,12 +254,14 @@ function validateUpload_(fileName, mimeType) {
 
 function uploadFileToCategory(customerFolderId, categoryName, fileName, mimeType, base64Data, docDate) {
   validateUpload_(fileName, mimeType);
-  var dateFolder = ensureCategoryDateFolder_(customerFolderId, categoryName, docDate || todayStr_());
+  var dateFolder = ensureDateFolder_(customerFolderId, docDate || todayStr_());
   var bytes = Utilities.base64Decode(base64Data);
   var blob = Utilities.newBlob(bytes, mimeType || 'application/octet-stream', fileName);
   var file = dateFolder.createFile(blob);
-  var dto = fileToDto_(file, categoryName);
-  dto.docDate = normalizeDocDate_(docDate || todayStr_());
+  var dto = fileToDto_(file, categoryName || '保單');
+  dto.docDate = typeof rocFolderNameFromYmd_ === 'function'
+    ? rocFolderNameFromYmd_(docDate || todayStr_())
+    : normalizeDocDate_(docDate || todayStr_());
   return dto;
 }
 
@@ -268,7 +272,7 @@ function importDriveFileToCategory(customerFolderId, categoryName, fileId, mode,
   if (src.getMimeType() === 'application/vnd.google-apps.folder') {
     throw new Error('請選擇檔案（不支援整個資料夾）');
   }
-  var dateFolder = ensureCategoryDateFolder_(customerFolderId, categoryName, docDate || todayStr_());
+  var dateFolder = ensureDateFolder_(customerFolderId, docDate || todayStr_());
   var out;
   if (mode === 'shortcut') {
     try { out = dateFolder.createShortcut(src.getId()); }
@@ -367,28 +371,11 @@ function syncCustomersWithDrive_(opt) {
 }
 
 function getCategoryTemplate_() {
-  var cached = cacheGet_('categories');
-  if (cached && cached.length) return cached;
-  var cats = getSetting('categories', null);
-  if (!cats || !cats.length) {
-    cats = (CONFIG.DEFAULT_CATEGORIES || []).slice();
-  }
-  if (typeof cats === 'string') {
-    try { cats = JSON.parse(cats); } catch (e) { cats = (CONFIG.DEFAULT_CATEGORIES || []).slice(); }
-  }
-  if (!Array.isArray(cats) || !cats.length) {
-    cats = (CONFIG.DEFAULT_CATEGORIES || []).slice();
-  }
-  cacheSet_('categories', cats);
-  return cats;
+  return ['保單'];
 }
 
 function defaultDocCategory_(categories) {
-  categories = categories || getCategoryTemplate_();
-  for (var i = 0; i < categories.length; i++) {
-    if (String(categories[i]).indexOf('保單') >= 0) return categories[i];
-  }
-  return categories[0] || (CONFIG.DEFAULT_DOC_CATEGORY_HINT || '02 保單');
+  return '保單';
 }
 
 function defaultFolderMeta_(categories) {

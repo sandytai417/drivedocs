@@ -6,7 +6,7 @@
 
 var CONFIG = {
   APP_NAME: 'DriveDocs',
-  APP_VERSION: '260813s',
+  APP_VERSION: '260813t',
   TAGLINE: 'Organize Client Documents Directly in Google Drive.',
   /** 系統擁有者（私人單人版）— 僅顯示姓名，不含職稱 */
   OWNER_NAME: '楊以寧',
@@ -15,14 +15,15 @@ var CONFIG = {
   OWNER_DISPLAY: '楊以寧',
   /**
    * Drive 路徑規則（固定）
-   * 客戶：我的雲端硬碟／客戶資料／客戶／{注音}／{客戶姓名}／{資料日期}／{文件類型}
+   * 客戶：我的雲端硬碟／客戶資料／{注音}／{客戶姓名}／{民國日期}
+   * 例：我的雲端硬碟／客戶資料／ㄉ／戴**／1150813
    * 活動：我的雲端硬碟／{年}／{N}月活動／{Y}年{M}月第W週活動
    */
   DRIVE_PATHS: {
-    CUSTOMERS: '我的雲端硬碟／客戶資料／客戶／{注音}／{客戶姓名}／{資料日期}／{文件類型}',
+    CUSTOMERS: '我的雲端硬碟／客戶資料／{注音}／{客戶姓名}／{資料日期}',
     ACTIVITIES: '我的雲端硬碟／{年}／{N}月活動／{Y}年{M}月第W週活動'
   },
-  CUSTOMERS_BUCKET: '客戶',
+  CUSTOMERS_BUCKET: '',
   DEFAULT_DOC_CATEGORY_HINT: '保單',
   PROP_KEYS: {
     SPREADSHEET_ID: 'SPREADSHEET_ID',
@@ -44,12 +45,7 @@ var CONFIG = {
     'completion', 'status', 'fileCount', 'zhuyin'
   ],
   DEFAULT_CATEGORIES: [
-    '01 基本資料',
-    '02 保單',
-    '03 保全文件',
-    '04 理賠',
-    '05 財務規劃',
-    '06 其他'
+    '保單'
   ],
   DEFAULT_ROOT_NAME: '客戶資料',
   SUPPORTED_MIME: {

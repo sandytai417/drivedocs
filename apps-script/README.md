@@ -5,46 +5,15 @@
 ## 核心規則
 
 - **Google Drive is the database.** 網站只做介面與索引。
-- **畫面依原本規劃**：底欄（首頁／上傳／客戶／活動／設定）、客戶「資料夾總覽」依文件類型分卡、上傳選文件類型、設定可編輯資料夾模板。
-- **Drive 路徑**：`客戶資料／客戶／{注音}／{姓名}／{文件類型}／{資料日期}／`
-- **Drive 刪夾會同步網站**：開啟客戶詳情或設定「立刻同步 Drive」時，若客戶資料夾已刪／進垃圾桶，Sheets 索引會清除。
+- **客戶上傳路徑**：`我的雲端硬碟／客戶資料／{注音}／{姓名}／{民國日期}`  
+  例：`客戶資料／ㄉ／戴**／1150813`
+- **畫面只留「保單」一張卡**，沒有基本資料／理賠等分類卡；Drive 不建分類夾。
+- **Drive 刪夾會同步網站**：設定「立刻同步 Drive」。
 
-## 載入加速（不改畫面）
+## 載入加速
 
-- 啟動一次 `api_boot`，本機／伺服器快取首頁資料，先畫介面再補資料
-- 客戶詳情預設不掃 Drive；點開某一分類才載檔
-- 批次上傳重用同一「類型／日期」資料夾
-- 新增客戶不預建全部分類夾
+- 啟動一次 `api_boot`，本機／伺服器快取首頁
+- 客戶詳情點「保單」才載檔
+- 批次上傳重用同一日期資料夾
 
-## 檔案清單（請整份貼上／覆蓋 Apps Script）
-
-| 檔案 | 說明 |
-|------|------|
-| `Code.gs` | Web App 入口 |
-| `Config.gs` | 常數與版本 |
-| `Utils.gs` | Sheets／快取／日期工具 |
-| `DriveFolder.gs` | Drive 資料夾層 |
-| `DriveService.gs` | 客戶 CRUD |
-| `DocumentService.gs` | 上傳／匯入／刪除 |
-| `DashboardService.gs` | 首頁／報表 |
-| `Setting.gs` | 設定與 `api_*` |
-| `BirthdayService.gs` | 本週壽星 |
-| `EventService.gs` | 講座／活動 |
-| `DemoData.gs` | 示範資料 |
-| `Zhuyin.gs` | 注音排序 |
-| `Index.html` | 殼層 |
-| `Stylesheet.html` | 樣式 |
-| `App.html` | 前端邏輯 |
-
-## 部署
-
-```bash
-npm install
-npx clasp login
-# 複製 .clasp.json.example → .clasp.json 並填 scriptId
-npx clasp push
-```
-
-Apps Script：**部署 → 新增部署 → 網頁應用程式**（或「管理部署」→ 新版本）。
-
-版本標記：`v260813s`
+版本標記：`v260813t`

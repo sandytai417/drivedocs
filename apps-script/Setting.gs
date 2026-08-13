@@ -176,9 +176,7 @@ function saveSettings(data) {
     } catch (e) { /* ignore */ }
   }
   if (data.categories && data.categories.length) {
-    var cleaned = data.categories.map(function (c) { return String(c).trim(); }).filter(Boolean);
-    if (!cleaned.length) throw new Error('至少需要一個文件分類');
-    setSetting('categories', cleaned);
+    setSetting('categories', ['保單']);
   }
   if (data.namingRule !== undefined) {
     setSetting('namingRule', String(data.namingRule));
@@ -209,7 +207,7 @@ function ensureReady_() {
  */
 function bootWorkspace() {
   // 整包 boot 快取：重複開啟幾乎零等待（不掃 Drive，加快載入）
-  var cachedBoot = sharedGetJson_('bootPayload_v4');
+  var cachedBoot = sharedGetJson_('bootPayload_v5');
   if (cachedBoot && cachedBoot.app && cachedBoot.home) {
     return cachedBoot;
   }
@@ -227,12 +225,9 @@ function bootWorkspace() {
     }
   }
 
-  // 若先前被清空分類設定，恢復預設模板（只在空的時候寫入）
+  // 畫面只留保單
   try {
-    var catsNow = getSetting('categories', null);
-    if (!catsNow || !catsNow.length) {
-      setSetting('categories', CONFIG.DEFAULT_CATEGORIES.slice());
-    }
+    setSetting('categories', ['保單']);
   } catch (eCat) { /* ignore */ }
 
   var app = getAppState();
@@ -254,11 +249,11 @@ function bootWorkspace() {
     activityPathHint: activityPathHint,
     appVersion: (CONFIG && CONFIG.APP_VERSION) || '',
     paths: (CONFIG && CONFIG.DRIVE_PATHS) || {
-      CUSTOMERS: '我的雲端硬碟／客戶資料／客戶／{注音}／{客戶姓名}／{資料日期}／{文件類型}',
+      CUSTOMERS: '我的雲端硬碟／客戶資料／{注音}／{客戶姓名}／{資料日期}',
       ACTIVITIES: '我的雲端硬碟／{年}／{N}月活動／{Y}年{M}月第W週活動'
     }
   };
-  sharedPutJson_('bootPayload_v4', payload, 180);
+  sharedPutJson_('bootPayload_v5', payload, 180);
   return payload;
 }
 

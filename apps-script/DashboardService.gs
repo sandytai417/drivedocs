@@ -67,11 +67,11 @@ function customerFromRowHomeFast_(row) {
 }
 
 function getHomePayload_() {
-  var cached = sharedGetJson_('homePayload_v4');
+  var cached = sharedGetJson_('homePayload_v5');
   if (cached && cached.dashboard && cached.customers) {
     return cached;
   }
-  var mem = cacheGet_('homePayload_v4');
+  var mem = cacheGet_('homePayload_v5');
   if (mem && mem.dashboard && mem.customers) return mem;
 
   var categories = getCategoryTemplate_();
@@ -145,8 +145,8 @@ function getHomePayload_() {
       initials: ZHUYIN_ORDER.filter(function (z) { return z !== '#'; })
     }
   };
-  cacheSet_('homePayload_v4', payload);
-  sharedPutJson_('homePayload_v4', payload, 300);
+  cacheSet_('homePayload_v5', payload);
+  sharedPutJson_('homePayload_v5', payload, 300);
   return payload;
 }
 

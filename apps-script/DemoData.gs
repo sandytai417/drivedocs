@@ -32,13 +32,10 @@ function seedDemoData() {
   });
 
   if (wang && wang.folderId) {
-    seedPlaceholder_(wang.folderId, '01 基本資料', '身分證影本.pdf.txt', '示範檔：請替換成真實 PDF');
-    seedPlaceholder_(wang.folderId, '02 保單', '保單.pdf.txt', '示範檔：保單');
-    seedPlaceholder_(wang.folderId, '02 保單', '要保書.pdf.txt', '示範檔：要保書');
-    seedPlaceholder_(wang.folderId, '05 財務規劃', '財務健檢摘要.pdf.txt', '示範檔');
-    updateFolderMeta(wang.id, '01 基本資料', { required: true, done: true });
-    updateFolderMeta(wang.id, '02 保單', { required: true, done: true });
-    getCustomer(wang.id); // refresh fileCount
+    seedPlaceholder_(wang.folderId, todayStr_(), '保單.pdf.txt', '示範檔：保單');
+    seedPlaceholder_(wang.folderId, todayStr_(), '要保書.pdf.txt', '示範檔：要保書');
+    updateFolderMeta(wang.id, '保單', { required: true, done: true });
+    getCustomer(wang.id);
     logActivity_(wang.id, '王大明', 'upload', '上傳新文件 · 王大明 · 保單.pdf');
   }
 
@@ -81,9 +78,8 @@ function seedAlignBirthdayThisWeek_() {
   }
 }
 
-function seedPlaceholder_(folderId, category, fileName, content) {
-  var dateFolder = ensureCategoryDateFolder_(folderId, category, todayStr_());
-  var cat = dateFolder;
-  if (cat.getFilesByName(fileName).hasNext()) return;
-  cat.createFile(Utilities.newBlob(content, 'text/plain', fileName));
+function seedPlaceholder_(folderId, docDate, fileName, content) {
+  var dateFolder = ensureDateFolder_(folderId, docDate);
+  if (dateFolder.getFilesByName(fileName).hasNext()) return;
+  dateFolder.createFile(Utilities.newBlob(content, 'text/plain', fileName));
 }

@@ -74,14 +74,17 @@ function invalidateSheetCache_(sheetName) {
   cacheDel_('homePayload_v2');
   cacheDel_('homePayload_v3');
   cacheDel_('homePayload_v4');
+  cacheDel_('homePayload_v5');
   sharedRemove_('homePayload');
   sharedRemove_('homePayload_v2');
   sharedRemove_('homePayload_v3');
   sharedRemove_('homePayload_v4');
+  sharedRemove_('homePayload_v5');
   sharedRemove_('bootPayload');
   sharedRemove_('bootPayload_v2');
   sharedRemove_('bootPayload_v3');
   sharedRemove_('bootPayload_v4');
+  sharedRemove_('bootPayload_v5');
   sharedRemove_('driveSyncResult_v1');
 }
 
@@ -412,6 +415,25 @@ function gregorianYearFromRoc_(rocYear) {
 
 function rocYearFromGregorian_(gy) {
   return Number(gy) - 1911;
+}
+
+/** 西元 yyyy-MM-dd → Drive 資料夾名 1150813 */
+function rocFolderNameFromYmd_(ymd) {
+  var s = String(ymd == null ? '' : ymd).trim();
+  var m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) {
+    s = typeof normalizeDocDate_ === 'function' ? normalizeDocDate_(s) : s;
+    m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  }
+  if (!m) {
+    var today = todayStr_().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!today) return s.replace(/\D/g, '') || s;
+    m = today;
+  }
+  var ry = rocYearFromGregorian_(m[1]);
+  if (!(ry >= 1 && ry <= 999)) return m[1] + m[2] + m[3];
+  if (ry >= 100) return String(ry) + m[2] + m[3];
+  return (ry < 10 ? '0' : '') + String(ry) + m[2] + m[3];
 }
 
 /**
