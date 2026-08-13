@@ -152,6 +152,7 @@ function weekdayLabelForMd_(md, week) {
  * 本週壽星列表（依月日，忽略年份；跨年週次可正確處理）
  */
 function listBirthdaysThisWeek() {
+  try { ensureDriveIndexSynced_(false); } catch (e) { /* keep */ }
   var customers = filterRowsWithDriveFolder_(sheetToObjects_(CONFIG.SHEETS.CUSTOMERS)).map(function (r) {
     return customerFromRow_(r, { light: true });
   });

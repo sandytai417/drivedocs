@@ -32,14 +32,10 @@
     uploadProgress: null
   };
 
-  var CACHE_TTL_MS = 600000; // 10 分鐘記憶體快取
-  var BOOT_STORE_KEY = 'drivedocs_boot_v10';
+  var CACHE_TTL_MS = 20000; // 20 秒：客戶列表跟 Drive 對齊
+  var BOOT_STORE_KEY = 'drivedocs_boot_v11';
   var DEFAULT_CATEGORIES_CLIENT_ = ['保單'];
-  var FABRICATED_CUSTOMER_NAMES_ = {
-    '白雅婷': 1, '包志明': 1, '柏建豪': 1, '潘怡君': 1, '馬志豪': 1,
-    '毛子恩': 1, '王大明': 1, '陳美玲': 1, '林俊傑': 1, '黃詩涵': 1
-  };
-  var BOOT_STORE_TTL_MS = 1800000; // 30 分鐘本地快取
+  var BOOT_STORE_TTL_MS = 20000;
   var renderSeq_ = 0;
 
   function cacheFresh_(at, ttl) {
@@ -202,7 +198,7 @@
   }
 
   async function getWeekOptionsCached_() {
-    if (cacheFresh_(state.cache.weekOptionsAt) && state.cache.weekOptions) {
+    if (cacheFresh_(state.cache.weekOptionsAt, 600000) && state.cache.weekOptions) {
       return state.cache.weekOptions;
     }
     var opts = listWeekOptionsClient_(16);
@@ -290,7 +286,7 @@
   function appVersion_() {
     return (state.app && state.app.appVersion) ||
       (state.app && state.app.settings && state.app.settings.appVersion) ||
-      '260813v';
+      '260813w';
   }
 
   function todayLocalYmd_() {
@@ -623,7 +619,7 @@
           String(state.detailCache.customer.id) === String(state.customerId)) return true;
       return !!(cacheFresh_(state.cache.customersAt) && state.cache.customers);
     }
-    if (page === 'activities') return !!(cacheFresh_(state.cache.activitiesAt) && state.cache.activities);
+    if (page === 'activities') return !!(cacheFresh_(state.cache.activitiesAt, 600000) && state.cache.activities);
     if (page === 'upload') return !!(state.app && state.app.settings);
     return false;
   }
@@ -772,19 +768,8 @@
     return !!(c && String(c.folderId || '').trim());
   }
 
-  function isFabricatedCustomer_(c) {
-    if (!c) return true;
-    var email = String(c.email || '').toLowerCase();
-    if (email.indexOf('@example.com') >= 0) return true;
-    var name = String(c.name || '').trim();
-    if (name && FABRICATED_CUSTOMER_NAMES_[name]) return true;
-    return false;
-  }
-
   function onlyDriveCustomers_(customers) {
-    return (customers || []).filter(function (c) {
-      return hasDriveFolder_(c) && !isFabricatedCustomer_(c);
-    });
+    return (customers || []).filter(hasDriveFolder_);
   }
 
   function filterCustomers(customers) {
@@ -1778,7 +1763,7 @@
   }
 
   async function renderEvents(content) {
-    if (cacheFresh_(state.cache.activitiesAt) && state.cache.activities) {
+    if (cacheFresh_(state.cache.activitiesAt, 600000) && state.cache.activities) {
       paintEventsUI_(content, state.cache.activities);
       run('api_listActivities').then(function (items) {
         if (!items) return;
@@ -2102,7 +2087,7 @@
     }
     var bdayOn = !!s.birthdayReminderEnabled;
     content.innerHTML =
-      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260813v') + '</p></section>' +
+      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260813w') + '</p></section>' +
       '<div class="stack"><section class="card"><div class="card__hd"><div><h2 class="card__title">雲端硬碟路徑</h2>' +
         '<p class="card__sub">客戶與本週活動分開存放</p></div></div><div class="card__bd">' +
         '<p class="upload-hint">客戶：' + escapeHtml(pathCustomers) + '</p>' +
@@ -2110,7 +2095,7 @@
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' +
           '<button type="button" class="btn" id="btn-sync-drive">立刻同步 Drive</button>' +
         '</div>' +
-        '<p class="upload-hint" id="sync-result" style="margin-top:8px">客戶列表不會顯示示範虛構姓名。開啟網站時會自動從列表移除白雅婷、王大明等舊示範資料。同步只檢查索引，不會掃整個雲端硬碟。</p>' +
+        '<p class="upload-hint" id="sync-result" style="margin-top:8px">開啟網站與同步都會掃描雲端硬碟「客戶資料」資料夾。列表只顯示 Drive 裡實際存在的姓名夾；試算表只是索引。</p>' +
       '</div></section>' +
       '<section class="card"><div class="card__bd">' +
         '<div class="field"><label>根目錄名稱</label><input id="s-root" value="' + escapeHtml(s.rootFolderName) + '"></div>' +
@@ -2251,16 +2236,16 @@
   function paintBootVersion_(extra) {
     var hint = $('boot-hint');
     if (!hint) return;
-    var ver = appVersion_() || '260813v';
+    var ver = appVersion_() || '260813w';
     hint.textContent = (extra || '載入中') + ' · v' + ver;
   }
 
   async function boot() {
     try {
-      try { console.log('[DriveDocs] boot · v260813v'); } catch (e) { /* ignore */ }
+      try { console.log('[DriveDocs] boot · v260813w'); } catch (e) { /* ignore */ }
       // 立刻顯示介面（不等伺服器）
       state.app = {
-        appVersion: '260813v',
+        appVersion: '260813w',
         user: { name: '楊以寧', display: '楊以寧', role: '', email: '' },
         settings: { rootFolderName: '客戶資料', categories: DEFAULT_CATEGORIES_CLIENT_.slice() },
         initialized: true
@@ -2325,7 +2310,7 @@
         animateBars(content);
       }).catch(function (e2) {
         $('content').innerHTML = '<div class="card card__bd"><p>' + escapeHtml((err && err.message) || e2.message || e2) +
-          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260813v。</p></div>';
+          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260813w。</p></div>';
       });
     });
     return p;

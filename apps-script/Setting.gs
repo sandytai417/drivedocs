@@ -206,8 +206,7 @@ function ensureReady_() {
  * 前端冷啟動只打這支，避免 api_getAppState → api_getHome 雙 round-trip
  */
 function bootWorkspace() {
-  // 整包 boot 快取：重複開啟幾乎零等待（不掃 Drive）
-  var cachedBoot = sharedGetJson_('bootPayload_v7');
+  var cachedBoot = sharedGetJson_('bootPayload_v8');
   if (cachedBoot && cachedBoot.app && cachedBoot.home) {
     return cachedBoot;
   }
@@ -225,8 +224,8 @@ function bootWorkspace() {
     }
   }
 
-  // 啟動只清試算表裡的虛構示範列，不掃 Drive
-  try { purgeFabricatedCustomersFromIndex_(); } catch (ePurge) { /* ignore */ }
+  // 以 Drive 實際資料夾對齊客戶列表
+  try { ensureDriveIndexSynced_(false); } catch (eSync) { /* ignore */ }
 
   var app = getAppState();
   var home = null;
@@ -246,7 +245,7 @@ function bootWorkspace() {
   };
   try { payload.weekLabel = currentWeekLabel_(); } catch (e2) { /* keep empty */ }
   try { payload.activityPathHint = activityDrivePathHint_(); } catch (e3) { /* keep empty */ }
-  sharedPutJson_('bootPayload_v7', payload, 180);
+  sharedPutJson_('bootPayload_v8', payload, 20);
   return payload;
 }
 
@@ -257,9 +256,7 @@ function api_getAppState() { return getAppState(); }
 function api_initialize() { return initializeWorkspace(); }
 function api_syncDrive(force) {
   ensureReady_();
-  var res = syncCustomersWithDrive_({ force: !!force });
-  invalidateSheetCache_(CONFIG.SHEETS.CUSTOMERS);
-  return res;
+  return syncCustomersWithDrive_({ force: !!force });
 }
 function api_getDashboard() { ensureReady_(); return getDashboard(); }
 function api_getHome() { ensureReady_(); return getHomePayload(); }

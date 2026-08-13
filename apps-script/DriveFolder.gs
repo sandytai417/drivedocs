@@ -385,7 +385,7 @@ function cacheLiveFolderIds_(ids) {
     id = String(id || '').trim();
     if (id) clean.push(id);
   });
-  sharedPutJson_('liveFolderIds_v1', { ids: clean, at: Date.now() }, 600);
+  sharedPutJson_('liveFolderIds_v1', { ids: clean, at: Date.now() }, 30);
 }
 
 function liveFolderIdSet_() {
@@ -399,81 +399,179 @@ function liveFolderIdSet_() {
   return set;
 }
 
+function listCustomerFoldersFromDriveCached_(force) {
+  if (!force) {
+    var mem = cacheGet_('driveFolders_v1');
+    if (mem && mem.folders) return mem.folders;
+    var cached = sharedGetJson_('driveFolders_v1');
+    if (cached && cached.folders && cached.at && (Date.now() - cached.at) < 20000) {
+      cacheSet_('driveFolders_v1', cached);
+      return cached.folders;
+    }
+  }
+  var folders = listCustomerFoldersFromDrive_();
+  var wrapped = { folders: folders, at: Date.now() };
+  cacheSet_('driveFolders_v1', wrapped);
+  sharedPutJson_('driveFolders_v1', wrapped, 30);
+  return folders;
+}
+
 /**
- * 客戶列表只收錄「Drive 資料夾 id 存在」的列。
- * 若剛同步過，再對齊實際仍在 Drive 的夾；沒有同步快取時不掃 Drive（保持載入速度）。
+ * 客戶列表只收錄最近一次 Drive 掃描仍存在的資料夾。
+ * 沒有掃描結果時不顯示（避免試算表殘列被當成客戶）。
  */
 function filterRowsWithDriveFolder_(rows) {
   rows = rows || [];
   var idSet = liveFolderIdSet_();
   var out = [];
   for (var i = 0; i < rows.length; i++) {
-    if (typeof isFabricatedCustomerRow_ === 'function' && isFabricatedCustomerRow_(rows[i])) continue;
     var fid = String(rows[i].folderId || '').trim();
     if (!fid) continue;
-    if (idSet && !idSet[fid]) continue;
+    if (!idSet || !idSet[fid]) continue;
     out.push(rows[i]);
   }
   return out;
 }
 
+function rewriteCustomersSheet_(objects) {
+  var sh = getSheet_(CONFIG.SHEETS.CUSTOMERS);
+  var lastCol = 1;
+  try { lastCol = Math.max(1, sh.getLastColumn()); } catch (e) { lastCol = (CONFIG.CUSTOMER_HEADERS || []).length || 1; }
+  var headers = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  if (!headers || !headers.length || !String(headers[0] || '').trim()) {
+    headers = (CONFIG.CUSTOMER_HEADERS || []).slice();
+  }
+  var values = [headers];
+  for (var i = 0; i < (objects || []).length; i++) {
+    var obj = objects[i] || {};
+    var row = [];
+    for (var j = 0; j < headers.length; j++) {
+      var h = headers[j];
+      if (!h) {
+        row.push('');
+        continue;
+      }
+      var v = obj[h];
+      if (v === undefined || v === null) row.push('');
+      else if (Object.prototype.toString.call(v) === '[object Date]') row.push(v);
+      else if (typeof v === 'object') row.push(JSON.stringify(v));
+      else row.push(v);
+    }
+    values.push(row);
+  }
+  sh.clearContents();
+  sh.getRange(1, 1, values.length, headers.length).setValues(values);
+}
+
 /**
- * 同步：從索引移除虛構示範列，以及 Drive 已刪的資料夾。
- * 不掃整個 Drive 樹（避免又慢又把示範夾加回來）。
+ * 以 Drive 為準同步索引：掃描 客戶資料／{注音}／{姓名}（含舊路徑 客戶／注音／姓名）。
+ * Drive 沒有的列從列表移除；Drive 有的夾才進入列表。
  * @param {{force?:boolean}} opt
- * @return {{removed:number, checked:number, imported:number, ids:string[]}}
  */
 function syncCustomersWithDrive_(opt) {
   opt = opt || {};
   if (!opt.force) {
     var cached = sharedGetJson_('driveSyncResult_v1');
-    if (cached && cached.at && (Date.now() - cached.at) < 60000) {
+    if (cached && cached.at && (Date.now() - cached.at) < 20000) {
       return cached.result || { removed: 0, checked: 0, imported: 0, ids: [] };
     }
   }
 
-  var demoRemoved = 0;
-  try { demoRemoved = purgeFabricatedCustomersFromIndex_(); } catch (e0) { demoRemoved = 0; }
+  var driveFolders = listCustomerFoldersFromDriveCached_(!!opt.force);
+  var liveIds = [];
+  var byDriveId = {};
+  for (var d = 0; d < driveFolders.length; d++) {
+    var df = driveFolders[d];
+    var dfId = String(df.folderId || '').trim();
+    var dfName = String(df.name || '').trim();
+    if (!dfId || !dfName) continue;
+    liveIds.push(dfId);
+    byDriveId[dfId] = df;
+  }
+  cacheLiveFolderIds_(liveIds);
 
   var rows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
-  var removedIds = [];
-  var checked = 0;
-  var liveIds = [];
+  var byFolderId = {};
+  var byName = {};
+  for (var r = 0; r < rows.length; r++) {
+    var fid = String(rows[r].folderId || '').trim();
+    var nm = String(rows[r].name || '').trim();
+    if (fid) byFolderId[fid] = rows[r];
+    if (nm && !byName[nm]) byName[nm] = rows[r];
+  }
 
-  for (var i = 0; i < rows.length; i++) {
-    var row = rows[i];
-    var id = String(row.id || '');
-    var folderId = String(row.folderId || '');
-    checked++;
-    if (!folderId || !folderExists_(folderId)) {
-      if (id) {
-        deleteObjectById_(CONFIG.SHEETS.CUSTOMERS, id);
-        removedIds.push(id);
-        try {
-          logActivity_(id, String(row.name || ''), 'sync_delete',
-            'Drive 資料夾已刪除，同步移除索引 · ' + (row.name || ''));
-        } catch (e) { /* ignore */ }
-      }
+  var used = {};
+  var out = [];
+  var imported = 0;
+  var now = nowIso_();
+  var folderMeta = JSON.stringify(defaultFolderMeta_(getCategoryTemplate_()));
+
+  for (d = 0; d < driveFolders.length; d++) {
+    df = driveFolders[d];
+    dfId = String(df.folderId || '').trim();
+    dfName = String(df.name || '').trim();
+    if (!dfId || !dfName) continue;
+
+    var existing = byFolderId[dfId];
+    if (!existing && byName[dfName] && !used[String(byName[dfName].id || '')]) {
+      existing = byName[dfName];
+    }
+
+    if (existing) {
+      used[String(existing.id || '')] = true;
+      existing.folderId = dfId;
+      existing.name = dfName;
+      existing.zhuyin = df.zhuyin || existing.zhuyin || '';
+      out.push(existing);
     } else {
-      liveIds.push(folderId);
+      imported++;
+      out.push({
+        id: newId_(),
+        name: dfName,
+        phone: '',
+        email: '',
+        birthday: '',
+        gender: '',
+        idNumber: '',
+        address: '',
+        tags: '[]',
+        notes: '',
+        folderId: dfId,
+        folderMeta: folderMeta,
+        createdAt: now,
+        updatedAt: now,
+        completion: 0,
+        status: 'not_started',
+        fileCount: 0,
+        zhuyin: df.zhuyin || ''
+      });
     }
   }
 
-  if (removedIds.length || demoRemoved) {
-    invalidateSheetCache_(CONFIG.SHEETS.CUSTOMERS);
+  var removedIds = [];
+  for (r = 0; r < rows.length; r++) {
+    var rid = String(rows[r].id || '');
+    if (rid && !used[rid]) removedIds.push(rid);
   }
 
-  cacheLiveFolderIds_(liveIds);
+  if (removedIds.length || imported) {
+    rewriteCustomersSheet_(out);
+    invalidateSheetCache_(CONFIG.SHEETS.CUSTOMERS);
+    cacheLiveFolderIds_(liveIds);
+  }
 
   var result = {
-    removed: removedIds.length + demoRemoved,
-    checked: checked,
-    imported: 0,
-    demoRemoved: demoRemoved,
+    removed: removedIds.length,
+    checked: driveFolders.length,
+    imported: imported,
     ids: removedIds
   };
-  sharedPutJson_('driveSyncResult_v1', { at: Date.now(), result: result }, 60);
+  sharedPutJson_('driveSyncResult_v1', { at: Date.now(), result: result }, 20);
   return result;
+}
+
+function ensureDriveIndexSynced_(force) {
+  return syncCustomersWithDrive_({ force: !!force });
 }
 
 function getCategoryTemplate_() {

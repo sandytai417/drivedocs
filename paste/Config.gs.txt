@@ -6,7 +6,7 @@
 
 var CONFIG = {
   APP_NAME: 'DriveDocs',
-  APP_VERSION: '260813v',
+  APP_VERSION: '260813w',
   TAGLINE: 'Organize Client Documents Directly in Google Drive.',
   /** 系統擁有者（私人單人版）— 僅顯示姓名，不含職稱 */
   OWNER_NAME: '楊以寧',
@@ -48,11 +48,6 @@ var CONFIG = {
     '保單'
   ],
   DEFAULT_ROOT_NAME: '客戶資料',
-  /** 舊版「匯入示範資料」寫入的虛構姓名，列表永遠不顯示 */
-  DEMO_CUSTOMER_NAMES: [
-    '白雅婷', '包志明', '柏建豪', '潘怡君', '馬志豪',
-    '毛子恩', '王大明', '陳美玲', '林俊傑', '黃詩涵'
-  ],
   SUPPORTED_MIME: {
     'application/pdf': true,
     'image/jpeg': true,

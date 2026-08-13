@@ -67,11 +67,13 @@ function customerFromRowHomeFast_(row) {
 }
 
 function getHomePayload_() {
-  var cached = sharedGetJson_('homePayload_v7');
+  try { ensureDriveIndexSynced_(false); } catch (eSync) { /* keep */ }
+
+  var cached = sharedGetJson_('homePayload_v8');
   if (cached && cached.dashboard && cached.customers) {
     return cached;
   }
-  var mem = cacheGet_('homePayload_v7');
+  var mem = cacheGet_('homePayload_v8');
   if (mem && mem.dashboard && mem.customers) return mem;
 
   var categories = getCategoryTemplate_();
@@ -141,8 +143,8 @@ function getHomePayload_() {
       initials: ZHUYIN_ORDER.filter(function (z) { return z !== '#'; })
     }
   };
-  cacheSet_('homePayload_v7', payload);
-  sharedPutJson_('homePayload_v7', payload, 300);
+  cacheSet_('homePayload_v8', payload);
+  sharedPutJson_('homePayload_v8', payload, 20);
   return payload;
 }
 

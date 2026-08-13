@@ -94,6 +94,7 @@ function customerFromRowCompact_(row, categories) {
 
 function listCustomers(sortBy) {
   sortBy = sortBy || 'zhuyin';
+  try { ensureDriveIndexSynced_(false); } catch (e) { /* keep */ }
   var categories = getCategoryTemplate_();
   var rows = filterRowsWithDriveFolder_(sheetToObjects_(CONFIG.SHEETS.CUSTOMERS)).map(function (r) {
     return customerFromRow_(r, { categories: categories, light: true, compact: true });
@@ -408,6 +409,7 @@ function searchAll(query) {
   var q = String(query || '').trim().toLowerCase();
   if (!q) return { customers: [], files: [], query: query };
 
+  try { ensureDriveIndexSynced_(false); } catch (e) { /* keep */ }
   var customers = filterRowsWithDriveFolder_(sheetToObjects_(CONFIG.SHEETS.CUSTOMERS)).map(customerFromRow_);
   var matchedCustomers = [];
   var matchedFiles = [];
