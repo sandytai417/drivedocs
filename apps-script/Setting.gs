@@ -207,7 +207,7 @@ function ensureReady_() {
  */
 function bootWorkspace() {
   // 整包 boot 快取：重複開啟幾乎零等待（不掃 Drive，加快載入）
-  var cachedBoot = sharedGetJson_('bootPayload_v5');
+  var cachedBoot = sharedGetJson_('bootPayload_v6');
   if (cachedBoot && cachedBoot.app && cachedBoot.home) {
     return cachedBoot;
   }
@@ -253,7 +253,7 @@ function bootWorkspace() {
       ACTIVITIES: '我的雲端硬碟／{年}／{N}月活動／{Y}年{M}月第W週活動'
     }
   };
-  sharedPutJson_('bootPayload_v5', payload, 180);
+  sharedPutJson_('bootPayload_v6', payload, 180);
   return payload;
 }
 

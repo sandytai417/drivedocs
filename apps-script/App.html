@@ -33,7 +33,7 @@
   };
 
   var CACHE_TTL_MS = 600000; // 10 分鐘記憶體快取
-  var BOOT_STORE_KEY = 'drivedocs_boot_v8';
+  var BOOT_STORE_KEY = 'drivedocs_boot_v9';
   var DEFAULT_CATEGORIES_CLIENT_ = ['保單'];
   var BOOT_STORE_TTL_MS = 1800000; // 30 分鐘本地快取
   var renderSeq_ = 0;
@@ -58,6 +58,10 @@
 
   function rememberHome_(home) {
     if (!home) return;
+    if (home.customers && home.customers.customers) {
+      home.customers.customers = onlyDriveCustomers_(home.customers.customers);
+      if (home.dashboard) home.dashboard.totalCustomers = home.customers.customers.length;
+    }
     state.cache.home = home;
     state.cache.homeAt = Date.now();
     if (home.customers) {
@@ -107,6 +111,7 @@
       return state.cache.customers;
     }
     var list = await run('api_listCustomers', 'zhuyin');
+    if (list && list.customers) list.customers = onlyDriveCustomers_(list.customers);
     state.cache.customers = list;
     state.cache.customersAt = Date.now();
     return list;
@@ -281,7 +286,7 @@
   function appVersion_() {
     return (state.app && state.app.appVersion) ||
       (state.app && state.app.settings && state.app.settings.appVersion) ||
-      '260813t';
+      '260813u';
   }
 
   function todayLocalYmd_() {
@@ -759,9 +764,17 @@
     });
   }
 
+  function hasDriveFolder_(c) {
+    return !!(c && String(c.folderId || '').trim());
+  }
+
+  function onlyDriveCustomers_(customers) {
+    return (customers || []).filter(hasDriveFolder_);
+  }
+
   function filterCustomers(customers) {
     var q = (state.listQuery || '').trim().toLowerCase();
-    return (customers || []).filter(function (c) {
+    return onlyDriveCustomers_(customers).filter(function (c) {
       if (state.zhuyinFilter !== 'all' && c.zhuyin !== state.zhuyinFilter) return false;
       if (!q) return true;
       var hay = [c.name, c.phone, c.email, c.birthday, formatBirthdayDisplayClient_(c.birthday), c.address, c.idNumber, c.gender].join(' ').toLowerCase();
@@ -771,10 +784,11 @@
 
   function renderCustomerListCard(list, customers) {
     var initials = ['全部'].concat((list.initials || []).filter(function (z) {
-      return (list.customers || []).some(function (c) { return c.zhuyin === z; });
+      return onlyDriveCustomers_(list.customers || []).some(function (c) { return c.zhuyin === z; });
     }));
+    var empty = '<p class="empty">沒有符合的客戶。列表只顯示雲端硬碟裡實際存在的資料夾。</p>';
     return '<section class="card">' +
-      '<div class="card__hd"><div><h2 class="card__title">客戶列表</h2><p class="card__sub">依注音排序（姓→名）</p></div></div>' +
+      '<div class="card__hd"><div><h2 class="card__title">客戶列表</h2><p class="card__sub">依注音排序 · 僅顯示 Drive 資料夾</p></div></div>' +
       '<div class="card__bd"><div class="toolbar">' +
         '<div class="pills" id="zhuyin-pills">' +
           initials.map(function (label) {
@@ -786,11 +800,29 @@
           '<input class="mini-search" id="list-search" placeholder="姓名／地址／生日／身分證" value="' + escapeHtml(state.listQuery) + '">' +
           '<button type="button" class="btn btn--primary" id="btn-add-customer">新增／上傳</button>' +
         '</div></div>' +
-        '<div class="table-wrap"><table class="table"><thead><tr>' +
+        '<div class="customer-list-cards">' +
+          (customers.length ? customers.map(customerCard).join('') : empty) +
+        '</div>' +
+        '<div class="table-wrap customer-list-table"><table class="table"><thead><tr>' +
           '<th>姓名</th><th>電話</th><th>性別</th><th>生日</th><th>文件</th><th>狀態</th><th>更新</th><th></th>' +
         '</tr></thead><tbody>' +
-        (customers.length ? customers.map(customerRow).join('') : '<tr><td colspan="8"><p class="empty">沒有符合的客戶</p></td></tr>') +
+        (customers.length ? customers.map(customerRow).join('') : '<tr><td colspan="8">' + empty + '</td></tr>') +
         '</tbody></table></div></div></section>';
+  }
+
+  function customerCard(c) {
+    var badge = c.isRenewal
+      ? '<span class="badge badge--renewal">續保</span>'
+      : '<span class="badge badge--new">新件</span>';
+    return '<article class="customer-card" data-id="' + escapeHtml(c.id) + '" role="button" tabindex="0">' +
+      '<div class="customer-card__main">' +
+        '<p class="customer-card__name">' + escapeHtml(c.name) +
+          ' <span class="muted">' + escapeHtml(c.zhuyin || '') + '</span></p>' +
+        '<p class="customer-card__meta">' + escapeHtml(c.phone || '無電話') +
+          ' · ' + (c.fileCount || 0) + ' 份 · ' + badge + '</p>' +
+      '</div>' +
+      '<button type="button" class="btn btn--ghost btn--sm more-btn" data-more="' + escapeHtml(c.id) + '" aria-label="更多">⋯</button>' +
+      '</article>';
   }
 
   function customerRow(c) {
@@ -852,10 +884,20 @@
     var add = content.querySelector('#btn-add-customer');
     if (add) add.onclick = function () { state.uploadCustomerId = null; setPage('upload'); };
 
-    content.querySelectorAll('tbody tr[data-id]').forEach(function (row) {
+    content.querySelectorAll('tbody tr[data-id], .customer-card[data-id]').forEach(function (row) {
+      function openRow() {
+        setPage('detail', { customerId: row.getAttribute('data-id'), tab: 'folders', openFolder: null });
+      }
       row.addEventListener('click', function (e) {
         if (e.target.closest('.more-btn')) return;
-        setPage('detail', { customerId: row.getAttribute('data-id'), tab: 'folders', openFolder: null });
+        openRow();
+      });
+      row.addEventListener('keydown', function (e) {
+        if (e.target.closest('.more-btn')) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openRow();
+        }
       });
     });
     content.querySelectorAll('.more-btn').forEach(function (btn) {
@@ -929,7 +971,7 @@
     var customers = [];
     if (!toActivity) {
       var list = await getCustomersCached_();
-      customers = (list && list.customers) || [];
+      customers = onlyDriveCustomers_((list && list.customers) || []);
     }
     if (!state.uploadCategory) state.uploadCategory = '保單';
     if (!state.uploadDocDate) state.uploadDocDate = todayLocalYmdDigits_();
@@ -2045,7 +2087,7 @@
     }
     var bdayOn = !!s.birthdayReminderEnabled;
     content.innerHTML =
-      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260813t') + '</p></section>' +
+      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260813u') + '</p></section>' +
       '<div class="stack"><section class="card"><div class="card__hd"><div><h2 class="card__title">雲端硬碟路徑</h2>' +
         '<p class="card__sub">客戶與本週活動分開存放</p></div></div><div class="card__bd">' +
         '<p class="upload-hint">客戶：' + escapeHtml(pathCustomers) + '</p>' +
@@ -2053,7 +2095,7 @@
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' +
           '<button type="button" class="btn" id="btn-sync-drive">立刻同步 Drive</button>' +
         '</div>' +
-        '<p class="upload-hint" id="sync-result" style="margin-top:8px">若在雲端硬碟刪除客戶資料夾，可按此同步網站索引</p>' +
+        '<p class="upload-hint" id="sync-result" style="margin-top:8px">客戶列表只收錄雲端硬碟裡實際存在的姓名資料夾，不會匯入虛構客戶。刪夾或在 Drive 新增資料夾後請按此同步。</p>' +
       '</div></section>' +
       '<section class="card"><div class="card__bd">' +
         '<div class="field"><label>根目錄名稱</label><input id="s-root" value="' + escapeHtml(s.rootFolderName) + '"></div>' +
@@ -2068,9 +2110,7 @@
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' +
           '<button type="button" class="btn btn--primary" id="btn-bday-toggle">' + (bdayOn ? '關閉每週提醒' : '啟用每週提醒') + '</button>' +
           '<button type="button" class="btn" id="btn-bday-send">立刻寄送本週提醒</button>' +
-        '</div></div></section>' +
-      '<section class="card"><div class="card__hd"><div><h2 class="card__title">示範資料</h2></div></div><div class="card__bd">' +
-        '<button type="button" class="btn" id="btn-seed">匯入示範資料</button></div></section></div>';
+        '</div></div></section></div>';
 
     $('btn-save-settings').onclick = async function () {
       try {
@@ -2086,23 +2126,16 @@
         if (btn) { btn.disabled = true; btn.textContent = '同步中…'; }
         var res = await run('api_syncDrive', true);
         invalidateClientCache_();
-        var msg = '已檢查 ' + (res.checked || 0) + ' 位客戶';
-        if (res.removed) msg += ' · 已同步移除 ' + res.removed + ' 筆';
-        else msg += ' · 無需更新';
+        var msg = '已檢查 ' + (res.checked || 0) + ' 筆索引';
+        if (res.removed) msg += ' · 已移除 ' + res.removed + ' 筆（Drive 無資料夾）';
+        if (res.imported) msg += ' · 從 Drive 加入 ' + res.imported + ' 位';
+        if (!res.removed && !res.imported) msg += ' · 無需更新';
         if (out) out.textContent = msg;
         toast(msg);
       } catch (err) { toast(err.message || err, true); }
       finally {
         if (btn) { btn.disabled = false; btn.textContent = '立刻同步 Drive'; }
       }
-    };
-    $('btn-seed').onclick = async function () {
-      try {
-        var res = await run('api_seedDemo');
-        invalidateClientCache_();
-        toast(res.message || '已匯入');
-        setPage('dashboard');
-      } catch (err) { toast(err.message || err, true); }
     };
     $('btn-bday-toggle').onclick = async function () {
       try {
@@ -2126,12 +2159,17 @@
 
   async function renderSearch(content) {
     var res = await run('api_search', state.searchQuery || '');
+    if (res && res.customers) res.customers = onlyDriveCustomers_(res.customers);
     content.innerHTML =
       '<section class="greeting"><h1>搜尋結果</h1><p>' + escapeHtml(state.searchQuery) + '</p></section>' +
       '<div class="stack"><section class="card"><div class="card__hd"><div><h2 class="card__title">客戶（' + res.customers.length + '）</h2></div></div>' +
-      '<div class="card__bd table-wrap"><table class="table"><tbody>' +
+      '<div class="card__bd">' +
+      '<div class="customer-list-cards">' +
+        (res.customers.length ? res.customers.map(customerCard).join('') : '<p class="empty">沒有符合的客戶</p>') +
+      '</div>' +
+      '<div class="table-wrap customer-list-table"><table class="table"><tbody>' +
       (res.customers.length ? res.customers.map(customerRow).join('') : '<tr><td><p class="empty">沒有符合的客戶</p></td></tr>') +
-      '</tbody></table></div></section>' +
+      '</tbody></table></div></div></section>' +
       '<section class="card"><div class="card__hd"><div><h2 class="card__title">文件（' + res.files.length + '）</h2></div></div><div class="card__bd">' +
       (res.files.length ? '<ul class="activity">' + res.files.map(function (x) {
         return '<li class="activity__item" data-id="' + escapeHtml(x.customerId) + '"><div class="activity__ico">📄</div><div>' +
@@ -2198,16 +2236,16 @@
   function paintBootVersion_(extra) {
     var hint = $('boot-hint');
     if (!hint) return;
-    var ver = appVersion_() || '260813t';
+    var ver = appVersion_() || '260813u';
     hint.textContent = (extra || '載入中') + ' · v' + ver;
   }
 
   async function boot() {
     try {
-      try { console.log('[DriveDocs] boot · v260813t'); } catch (e) { /* ignore */ }
+      try { console.log('[DriveDocs] boot · v260813u'); } catch (e) { /* ignore */ }
       // 立刻顯示介面（不等伺服器）
       state.app = {
-        appVersion: '260813t',
+        appVersion: '260813u',
         user: { name: '楊以寧', display: '楊以寧', role: '', email: '' },
         settings: { rootFolderName: '客戶資料', categories: DEFAULT_CATEGORIES_CLIENT_.slice() },
         initialized: true
@@ -2272,7 +2310,7 @@
         animateBars(content);
       }).catch(function (e2) {
         $('content').innerHTML = '<div class="card card__bd"><p>' + escapeHtml((err && err.message) || e2.message || e2) +
-          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260813t。</p></div>';
+          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260813u。</p></div>';
       });
     });
     return p;

@@ -95,7 +95,7 @@ function customerFromRowCompact_(row, categories) {
 function listCustomers(sortBy) {
   sortBy = sortBy || 'zhuyin';
   var categories = getCategoryTemplate_();
-  var rows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS).map(function (r) {
+  var rows = filterRowsWithDriveFolder_(sheetToObjects_(CONFIG.SHEETS.CUSTOMERS)).map(function (r) {
     return customerFromRow_(r, { categories: categories, light: true, compact: true });
   });
   if (sortBy === 'updated') {
@@ -247,6 +247,25 @@ function createCustomer(data) {
   var existing = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
   for (var i = 0; i < existing.length; i++) {
     if (String(existing[i].name) === name) {
+      var existingFid = String(existing[i].folderId || '').trim();
+      if (existingFid && folderExists_(existingFid)) {
+        return customerFromRow_(existing[i]);
+      }
+      var rebuilt = requireLiveCustomerFolder_(
+        createCustomerFolderTree(name, { id: String(existing[i].id), name: name }),
+        name
+      );
+      updateObjectById_(CONFIG.SHEETS.CUSTOMERS, existing[i].id, {
+        folderId: rebuilt.folderId,
+        zhuyin: rebuilt.zhuyin || getZhuyinInitial(name),
+        updatedAt: nowIso_()
+      });
+      var refreshed = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
+      for (var j = 0; j < refreshed.length; j++) {
+        if (String(refreshed[j].id) === String(existing[i].id)) {
+          return customerFromRow_(refreshed[j]);
+        }
+      }
       return customerFromRow_(existing[i]);
     }
   }
@@ -272,7 +291,7 @@ function createCustomer(data) {
     createdAt: now
   };
 
-  var tree = createCustomerFolderTree(name, meta);
+  var tree = requireLiveCustomerFolder_(createCustomerFolderTree(name, meta), name);
   var row = {
     id: id,
     name: name,
@@ -389,7 +408,7 @@ function searchAll(query) {
   var q = String(query || '').trim().toLowerCase();
   if (!q) return { customers: [], files: [], query: query };
 
-  var customers = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS).map(customerFromRow_);
+  var customers = filterRowsWithDriveFolder_(sheetToObjects_(CONFIG.SHEETS.CUSTOMERS)).map(customerFromRow_);
   var matchedCustomers = [];
   var matchedFiles = [];
 

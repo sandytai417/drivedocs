@@ -9,7 +9,7 @@ function doGet(e) {
     .evaluate()
     .setTitle('DriveDocs — 楊以寧')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover');
 }
 
 function include(filename) {
@@ -21,7 +21,7 @@ function onOpen() {
     SpreadsheetApp.getUi()
       .createMenu('DriveDocs')
       .addItem('初始化工作區', 'initializeWorkspace')
-      .addItem('匯入示範資料', 'seedDemoData')
+      .addItem('立刻同步 Drive', 'menuSyncDrive_')
       .addSeparator()
       .addItem('啟用每週壽星提醒', 'enableWeeklyBirthdayReminder')
       .addItem('關閉每週壽星提醒', 'disableWeeklyBirthdayReminder')
@@ -30,6 +30,16 @@ function onOpen() {
   } catch (err) {
     // 非試算表綁定時略過
   }
+}
+
+function menuSyncDrive_() {
+  var res = syncCustomersWithDrive_({ force: true });
+  var msg = '已檢查 ' + (res.checked || 0) + ' 筆';
+  if (res.removed) msg += ' · 移除 ' + res.removed + ' 筆（Drive 無資料夾）';
+  if (res.imported) msg += ' · 從 Drive 加入 ' + res.imported + ' 位';
+  if (!res.removed && !res.imported) msg += ' · 無需更新';
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) { /* ignore */ }
+  return res;
 }
 
 function sendWeeklyBirthdayReminderMenu_() {
