@@ -379,7 +379,7 @@
   function appVersion_() {
     return (state.app && state.app.appVersion) ||
       (state.app && state.app.settings && state.app.settings.appVersion) ||
-      '260814b';
+      '260814c';
   }
 
   function todayLocalYmd_() {
@@ -1888,6 +1888,37 @@
     }).join('') + '</ul>';
   }
 
+  function applyUpdatedCustomer_(updated) {
+    if (!updated || !updated.id) return;
+    updated._fullInfo = true;
+    if (state.detailCache && state.detailCache.customer &&
+        String(state.detailCache.customer.id) === String(updated.id)) {
+      state.detailCache.customer = Object.assign({}, state.detailCache.customer, updated, { _fullInfo: true });
+    }
+    function patchList_(list) {
+      if (!list || !list.customers) return;
+      for (var i = 0; i < list.customers.length; i++) {
+        if (String(list.customers[i].id) === String(updated.id)) {
+          list.customers[i] = Object.assign({}, list.customers[i], updated);
+        }
+      }
+    }
+    patchList_(state.cache.customers);
+    if (state.cache.home && state.cache.home.customers) patchList_(state.cache.home.customers);
+  }
+
+  async function hydrateDetailCustomer_(data, seq) {
+    if (!data || !data.customer || data.customer._fullInfo) return data;
+    var full = await run('api_getCustomer', data.customer.id, false);
+    if (seq != null && seq !== renderSeq_) return data;
+    if (full && full.customer) {
+      data.customer = Object.assign({}, data.customer, full.customer, { _fullInfo: true });
+      if (full.folderMeta) data.folderMeta = full.folderMeta;
+      state.detailCache = data;
+    }
+    return data;
+  }
+
   function findCachedCustomer_(id) {
     var list = state.cache.customers;
     if (!list || !list.customers) return null;
@@ -1997,6 +2028,12 @@
     } catch (e) { /* ignore */ }
 
     if (data) {
+      if (tab === 'info' || tab === 'notes') {
+        try {
+          data = await hydrateDetailCustomer_(data, seq);
+        } catch (eHydra) { /* 仍顯示列表快取 */ }
+        if (seq !== renderSeq_) return;
+      }
       paintDetailShell_(content, data.customer, tab, data);
       var body0 = $('detail-body');
       if (!body0) return;
@@ -2021,6 +2058,7 @@
     }
     if (seq !== renderSeq_) return;
     data.loadedCategories = {};
+    if (data.customer) data.customer._fullInfo = true;
     state.detailCache = data;
     paintDetailShell_(content, data.customer, tab, data);
     var body = $('detail-body');
@@ -2144,14 +2182,22 @@
     wireBirthdayInput_($('c-birthday'));
     $('btn-save-info').onclick = async function () {
       try {
-        await run('api_updateCustomer', c.id, {
+        var updated = await run('api_updateCustomer', c.id, {
           name: $('c-name').value, phone: $('c-phone').value, email: $('c-email').value,
           birthday: normalizeBirthdayClient_($('c-birthday').value), gender: $('c-gender').value,
           idNumber: $('c-id').value.trim(), address: $('c-address').value.trim()
         });
+        applyUpdatedCustomer_(updated);
         invalidateClientCache_();
         toast('已儲存');
-        render();
+        var bodyEl = $('detail-body');
+        var contentEl = $('content');
+        if (contentEl && state.detailCache && state.detailCache.customer) {
+          paintDetailShell_(contentEl, state.detailCache.customer, 'info', state.detailCache);
+        }
+        if (bodyEl && state.detailCache && state.detailCache.customer) {
+          renderInfoTab(bodyEl, state.detailCache.customer);
+        }
       } catch (err) { toast(err.message || err, true); }
     };
   }
@@ -2162,7 +2208,8 @@
       '<button type="button" class="btn btn--primary" id="btn-save-notes">儲存備註</button></div></section>';
     $('btn-save-notes').onclick = async function () {
       try {
-        await run('api_updateCustomer', c.id, { notes: $('c-notes').value });
+        var updatedNotes = await run('api_updateCustomer', c.id, { notes: $('c-notes').value });
+        applyUpdatedCustomer_(updatedNotes);
         toast('已儲存');
       } catch (err) { toast(err.message || err, true); }
     };
@@ -2179,7 +2226,7 @@
     }
     var bdayOn = !!s.birthdayReminderEnabled;
     content.innerHTML =
-      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260814b') + '</p></section>' +
+      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260814c') + '</p></section>' +
       '<div class="stack"><section class="card"><div class="card__hd"><div><h2 class="card__title">雲端硬碟路徑</h2>' +
         '<p class="card__sub">客戶與本週活動分開存放</p></div></div><div class="card__bd">' +
         '<p class="upload-hint">客戶：' + escapeHtml(pathCustomers) + '</p>' +
@@ -2324,16 +2371,16 @@
   function paintBootVersion_(extra) {
     var hint = $('boot-hint');
     if (!hint) return;
-    var ver = appVersion_() || '260814b';
+    var ver = appVersion_() || '260814c';
     hint.textContent = (extra || '載入中') + ' · v' + ver;
   }
 
   async function boot() {
     try {
-      try { console.log('[DriveDocs] boot · v260814b'); } catch (e) { /* ignore */ }
+      try { console.log('[DriveDocs] boot · v260814c'); } catch (e) { /* ignore */ }
       // 立刻顯示介面（不等伺服器）
       state.app = {
-        appVersion: '260814b',
+        appVersion: '260814c',
         user: { name: '楊以寧', display: '楊以寧', role: '', email: '' },
         settings: { rootFolderName: '客戶資料', categories: DEFAULT_CATEGORIES_CLIENT_.slice() },
         initialized: true
@@ -2398,7 +2445,7 @@
         animateBars(content);
       }).catch(function (e2) {
         $('content').innerHTML = '<div class="card card__bd"><p>' + escapeHtml((err && err.message) || e2.message || e2) +
-          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260814b。</p></div>';
+          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260814c。</p></div>';
       });
     });
     return p;
