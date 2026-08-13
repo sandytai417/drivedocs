@@ -11,7 +11,7 @@
 <body>
   <div id="boot" class="boot">
     <p class="boot__brand">DriveDocs</p>
-    <p class="boot__hint" id="boot-hint">載入中 · v260814e</p>
+    <p class="boot__hint" id="boot-hint">載入中 · v260814f</p>
   </div>
 
   <div id="setup" class="setup hidden" hidden></div>

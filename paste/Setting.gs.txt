@@ -271,6 +271,14 @@ function api_ensureCustomer(data) {
   if (typeof data === 'string') data = { name: data, customerName: data };
   return ensureCustomer(data);
 }
+function api_parseCustomerImport(text) {
+  ensureReady_();
+  return parseCustomerImportText_(text);
+}
+function api_importCustomers(payload) {
+  ensureReady_();
+  return importCustomersBulk(payload);
+}
 function api_updateCustomer(id, data) { ensureReady_(); return updateCustomer(id, data); }
 function api_deleteCustomer(id) { ensureReady_(); return deleteCustomer(id); }
 function api_updateFolderMeta(customerId, category, patch) {

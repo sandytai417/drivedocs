@@ -430,7 +430,7 @@
   function appVersion_() {
     return (state.app && state.app.appVersion) ||
       (state.app && state.app.settings && state.app.settings.appVersion) ||
-      '260814e';
+      '260814f';
   }
 
   function todayLocalYmd_() {
@@ -2298,7 +2298,7 @@
     }
     var bdayOn = !!s.birthdayReminderEnabled;
     content.innerHTML =
-      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260814e') + '</p></section>' +
+      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260814f') + '</p></section>' +
       '<div class="stack"><section class="card"><div class="card__hd"><div><h2 class="card__title">雲端硬碟路徑</h2>' +
         '<p class="card__sub">客戶與本週活動分開存放</p></div></div><div class="card__bd">' +
         '<p class="upload-hint">客戶：' + escapeHtml(pathCustomers) + '</p>' +
@@ -2314,6 +2314,16 @@
         '<p class="upload-hint">索引試算表：' + (s.spreadsheetUrl ? '<a href="' + escapeHtml(s.spreadsheetUrl) + '" target="_blank">開啟</a>' : '—') +
         ' · 根目錄：' + (s.rootFolderUrl ? '<a href="' + escapeHtml(s.rootFolderUrl) + '" target="_blank">開啟</a>' : '—') + '</p>' +
         '<button type="button" class="btn btn--primary" id="btn-save-settings">儲存</button></div></section>' +
+      '<section class="card"><div class="card__hd"><div><h2 class="card__title">一次上傳生日名單</h2>' +
+        '<p class="card__sub">整份貼上，按一次即可</p></div></div><div class="card__bd">' +
+        '<p class="upload-hint">格式：雷佳明05/09 電話:0972905295（沒有電話也可以）</p>' +
+        '<div class="field"><label>生日名單</label><textarea id="s-import" rows="12" placeholder="雷佳明05/09 電話:0972905295"></textarea></div>' +
+        '<div id="import-overall" class="upload-overall" style="display:none;margin-top:8px"></div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' +
+          '<button type="button" class="btn btn--primary" id="btn-import-customers">一次上傳</button>' +
+        '</div>' +
+        '<p class="upload-hint" id="import-result" style="margin-top:8px">會建立「千婷-整理客戶資料／注音／姓名」。同名會更新生日與電話。</p>' +
+      '</div></section>' +
       '<section class="card"><div class="card__hd"><div><h2 class="card__title">本週壽星提醒</h2>' +
         '<p class="card__sub">每週一自動寄信到你的 Gmail，列出當週生日客戶</p></div></div><div class="card__bd">' +
         '<p class="upload-hint">排程：' + escapeHtml(s.birthdayReminderSchedule || '每週一 09:00（台北時間）') +
@@ -2329,6 +2339,57 @@
         toast('已儲存');
         bootDriveMeta();
       } catch (err) { toast(err.message || err, true); }
+    };
+    $('btn-import-customers').onclick = async function () {
+      var btn = $('btn-import-customers');
+      var out = $('import-result');
+      var bar = document.getElementById('import-overall');
+      var text = ($('s-import') && $('s-import').value) || '';
+      if (!String(text).trim()) {
+        toast('請先貼上生日名單', true);
+        return;
+      }
+      try {
+        if (btn) { btn.disabled = true; btn.textContent = '讀取名單…'; }
+        var parsed = await run('api_parseCustomerImport', text);
+        var list = (parsed && parsed.items) || [];
+        if (!list.length) throw new Error('沒有辨識到客戶，請用「雷佳明05/09 電話:0912345678」這種格式');
+        var created = 0;
+        var updated = 0;
+        var errN = 0;
+        var done = 0;
+        var total = list.length;
+        paintOverallBar_(bar, { label: '準備匯入 ' + total + ' 位', percent: 2, done: 0, total: total });
+        if (out) out.textContent = '辨識到 ' + total + ' 位，開始建立資料夾…';
+        for (var i = 0; i < list.length; i += 8) {
+          var chunk = list.slice(i, i + 8);
+          if (btn) btn.textContent = '上傳中 ' + Math.min(i + chunk.length, total) + '/' + total;
+          var res = await run('api_importCustomers', { items: chunk });
+          created += Number(res && res.created) || 0;
+          updated += Number(res && res.updated) || 0;
+          errN += (res && res.errors && res.errors.length) || 0;
+          done += chunk.length;
+          paintOverallBar_(bar, {
+            label: '上傳中 ' + done + '/' + total,
+            percent: Math.round((done / total) * 98),
+            done: done,
+            total: total
+          });
+          await sleepMs_(40);
+        }
+        invalidateClientCache_();
+        paintOverallBar_(bar, { label: '上傳成功', percent: 100, done: total, total: total, success: true });
+        var msg = '上傳成功：新增 ' + created + ' 位 · 更新 ' + updated + ' 位';
+        if (errN) msg += ' · 失敗 ' + errN + ' 位';
+        if (out) out.textContent = msg;
+        toast('上傳成功');
+        await sleepMs_(800);
+      } catch (err) {
+        toast(err.message || err, true);
+        if (out) out.textContent = String((err && err.message) || err);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '一次上傳'; }
+      }
     };
     $('btn-sync-drive').onclick = async function () {
       var btn = $('btn-sync-drive');
@@ -2443,16 +2504,16 @@
   function paintBootVersion_(extra) {
     var hint = $('boot-hint');
     if (!hint) return;
-    var ver = appVersion_() || '260814e';
+    var ver = appVersion_() || '260814f';
     hint.textContent = (extra || '載入中') + ' · v' + ver;
   }
 
   async function boot() {
     try {
-      try { console.log('[DriveDocs] boot · v260814e'); } catch (e) { /* ignore */ }
+      try { console.log('[DriveDocs] boot · v260814f'); } catch (e) { /* ignore */ }
       // 立刻顯示介面（不等伺服器）
       state.app = {
-        appVersion: '260814e',
+        appVersion: '260814f',
         user: { name: '楊以寧', display: '楊以寧', role: '', email: '' },
         settings: { rootFolderName: '千婷-整理客戶資料', categories: DEFAULT_CATEGORIES_CLIENT_.slice() },
         initialized: true
@@ -2517,7 +2578,7 @@
         animateBars(content);
       }).catch(function (e2) {
         $('content').innerHTML = '<div class="card card__bd"><p>' + escapeHtml((err && err.message) || e2.message || e2) +
-          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260814e。</p></div>';
+          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260814f。</p></div>';
       });
     });
     return p;

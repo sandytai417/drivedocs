@@ -563,4 +563,234 @@ function bumpReport_(field, delta) {
   appendObject_(CONFIG.SHEETS.REPORTS, row);
 }
 
+function splitImportCells_(line) {
+  line = String(line == null ? '' : line).replace(/^\uFEFF/, '').replace(/\r$/, '');
+  if (!String(line).trim()) return [];
+  if (line.indexOf('\t') >= 0) {
+    return line.split('\t').map(function (s) { return String(s || '').trim(); });
+  }
+  if (line.indexOf(',') >= 0 || line.indexOf('，') >= 0) {
+    return line.split(/[,，]/).map(function (s) {
+      return String(s || '').trim().replace(/^["']+|["']+$/g, '');
+    });
+  }
+  return String(line).trim().split(/\s+/);
+}
+
+function importHeaderKey_(cell) {
+  var s = String(cell || '').trim().toLowerCase().replace(/\s+/g, '');
+  if (!s) return '';
+  if (/姓名|名字|客戶名|^name$|fullname/.test(s)) return 'name';
+  if (/生日|出生|birthday|^dob$/.test(s)) return 'birthday';
+  if (/電話|手機|phone|tel|行動/.test(s)) return 'phone';
+  if (/郵|email|e-mail|mail/.test(s)) return 'email';
+  if (/性別|gender/.test(s)) return 'gender';
+  if (/地址|address/.test(s)) return 'address';
+  return '';
+}
+
+function looksLikePhoneImport_(raw) {
+  var d = String(raw || '').replace(/\D/g, '');
+  if (d.length === 10 && d.charAt(0) === '0') return true;
+  if (d.length === 9 && d.charAt(0) === '9') return true;
+  if (d.length >= 8 && d.length <= 11 && d.charAt(0) === '0') return true;
+  return false;
+}
+
+function looksLikeBirthdayImport_(raw) {
+  var s = String(raw || '').trim();
+  if (!s || looksLikePhoneImport_(s)) return false;
+  try {
+    return !!parseBirthdayParts_(s);
+  } catch (e) {
+    return false;
+  }
+}
+
+function assignImportFields_(cells) {
+  var out = { name: '', phone: '', birthday: '', email: '', gender: '', address: '' };
+  var leftover = [];
+  for (var i = 0; i < cells.length; i++) {
+    var cell = String(cells[i] || '').trim();
+    if (!cell) continue;
+    if (!out.phone && looksLikePhoneImport_(cell)) { out.phone = cell; continue; }
+    if (!out.birthday && looksLikeBirthdayImport_(cell)) { out.birthday = cell; continue; }
+    if (!out.email && /@/.test(cell)) { out.email = cell; continue; }
+    leftover.push(cell);
+  }
+  out.name = leftover.join(' ').trim();
+  return out;
+}
+
+/** 雷佳明05/09 電話:0972905295 */
+function parseBirthdayRosterLine_(line) {
+  line = String(line == null ? '' : line).replace(/^\uFEFF/, '').replace(/\r$/, '').trim();
+  if (!line) return { skip: true };
+  if (/^[—\-－_~～═\s]+$/.test(line)) return { skip: true };
+  if (/名單/.test(line) && !/\d{1,2}\s*[\/月]\s*\d{1,2}/.test(line)) return { skip: true };
+  var m = line.match(/^(.+?)(\d{1,2})\s*[\/月]\s*(\d{1,2})日?(?:\s*電話\s*[:：]?\s*([0-9\-]+))?\s*$/);
+  if (!m) return null;
+  var name = String(m[1] || '').trim();
+  if (!name) return null;
+  var mm = Number(m[2]);
+  var dd = Number(m[3]);
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  var pad = function (n) { return n < 10 ? '0' + n : String(n); };
+  return {
+    skip: false,
+    item: {
+      name: name,
+      birthday: pad(mm) + '-' + pad(dd),
+      phone: String(m[4] || '').trim(),
+      email: '',
+      gender: '',
+      address: ''
+    }
+  };
+}
+
+function parseCustomerImportText_(text) {
+  var lines = String(text == null ? '' : text).replace(/^\uFEFF/, '').split(/\n/);
+  var items = [];
+  var warnings = [];
+  var keys = null;
+
+  for (var i = 0; i < lines.length; i++) {
+    var roster = parseBirthdayRosterLine_(lines[i]);
+    if (roster && roster.skip) continue;
+    if (roster && roster.item) {
+      items.push(roster.item);
+      continue;
+    }
+
+    var cells = splitImportCells_(lines[i]);
+    if (!cells.length) continue;
+    var nonempty = cells.filter(function (c) { return String(c || '').trim(); });
+    if (!nonempty.length) continue;
+
+    if (!keys && nonempty.length >= 2) {
+      var mapped = nonempty.map(importHeaderKey_);
+      var hit = mapped.filter(Boolean).length;
+      if (hit >= 2 || mapped.indexOf('name') >= 0) {
+        keys = cells.map(importHeaderKey_);
+        continue;
+      }
+    }
+
+    var row = { name: '', phone: '', birthday: '', email: '', gender: '', address: '' };
+    if (keys) {
+      for (var k = 0; k < cells.length; k++) {
+        var key = keys[k];
+        if (key) row[key] = String(cells[k] || '').trim();
+      }
+      if (!row.name) {
+        var guessed = assignImportFields_(cells);
+        row.name = guessed.name;
+        if (!row.phone) row.phone = guessed.phone;
+        if (!row.birthday) row.birthday = guessed.birthday;
+        if (!row.email) row.email = guessed.email;
+      }
+    } else {
+      row = assignImportFields_(cells);
+    }
+
+    row.name = String(row.name || '').trim();
+    if (!row.name) {
+      warnings.push('第 ' + (i + 1) + ' 行找不到姓名');
+      continue;
+    }
+    items.push({
+      name: row.name,
+      phone: String(row.phone || '').trim(),
+      birthday: String(row.birthday || '').trim(),
+      email: String(row.email || '').trim(),
+      gender: String(row.gender || '').trim(),
+      address: String(row.address || '').trim()
+    });
+  }
+
+  return { items: items, warnings: warnings, count: items.length };
+}
+
+function importCustomersBulk(payload) {
+  payload = payload || {};
+  var items = payload.items;
+  if ((!items || !items.length) && payload.text) {
+    items = parseCustomerImportText_(payload.text).items;
+  }
+  items = items || [];
+  var max = 20;
+  if (items.length > max) items = items.slice(0, max);
+
+  var created = 0;
+  var updated = 0;
+  var skipped = 0;
+  var errors = [];
+  var byName = {};
+  try {
+    var allRows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
+    for (var a = 0; a < allRows.length; a++) {
+      var nm0 = String(allRows[a].name || '').trim();
+      if (nm0) byName[nm0] = allRows[a];
+    }
+  } catch (eMap) { byName = {}; }
+
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i] || {};
+    var name = pickCustomerName_(it);
+    if (!name) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      var existing = byName[name] || null;
+      if (existing) {
+        var patch = { updatedAt: nowIso_() };
+        if (it.phone) patch.phone = String(it.phone).trim();
+        if (it.birthday) patch.birthday = normalizeBirthday_(it.birthday);
+        if (it.email) patch.email = String(it.email).trim();
+        if (it.gender) patch.gender = String(it.gender).trim();
+        if (it.address) patch.address = String(it.address).trim();
+        var fid = String(existing.folderId || '').trim();
+        if (!fid || !folderExists_(fid)) {
+          var rebuilt = requireLiveCustomerFolder_(
+            createCustomerFolderTree(name, { id: String(existing.id), name: name }),
+            name
+          );
+          patch.folderId = rebuilt.folderId;
+          patch.zhuyin = rebuilt.zhuyin || getZhuyinInitial(name);
+        } else {
+          try { relocateIndexedCustomer_(customerFromRow_(existing)); } catch (eRel) { /* keep */ }
+        }
+        updateObjectById_(CONFIG.SHEETS.CUSTOMERS, existing.id, patch);
+        byName[name] = existing;
+        updated += 1;
+      } else {
+        var createdRow = createCustomer({
+          name: name,
+          phone: it.phone || '',
+          birthday: it.birthday || '',
+          email: it.email || '',
+          gender: it.gender || '',
+          address: it.address || ''
+        });
+        if (createdRow && createdRow.name) byName[createdRow.name] = createdRow;
+        created += 1;
+      }
+    } catch (e) {
+      errors.push({ name: name, error: String((e && e.message) || e) });
+    }
+  }
+
+  try { invalidateSheetCache_(CONFIG.SHEETS.CUSTOMERS); } catch (eInv) { /* ignore */ }
+
+  return {
+    created: created,
+    updated: updated,
+    skipped: skipped,
+    errors: errors,
+    count: items.length
+  };
+}
+
 // END DriveService.gs
