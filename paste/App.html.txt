@@ -379,7 +379,7 @@
   function appVersion_() {
     return (state.app && state.app.appVersion) ||
       (state.app && state.app.settings && state.app.settings.appVersion) ||
-      '260814a';
+      '260814b';
   }
 
   function todayLocalYmd_() {
@@ -2179,7 +2179,7 @@
     }
     var bdayOn = !!s.birthdayReminderEnabled;
     content.innerHTML =
-      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260814a') + '</p></section>' +
+      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260814b') + '</p></section>' +
       '<div class="stack"><section class="card"><div class="card__hd"><div><h2 class="card__title">雲端硬碟路徑</h2>' +
         '<p class="card__sub">客戶與本週活動分開存放</p></div></div><div class="card__bd">' +
         '<p class="upload-hint">客戶：' + escapeHtml(pathCustomers) + '</p>' +
@@ -2324,16 +2324,16 @@
   function paintBootVersion_(extra) {
     var hint = $('boot-hint');
     if (!hint) return;
-    var ver = appVersion_() || '260814a';
+    var ver = appVersion_() || '260814b';
     hint.textContent = (extra || '載入中') + ' · v' + ver;
   }
 
   async function boot() {
     try {
-      try { console.log('[DriveDocs] boot · v260814a'); } catch (e) { /* ignore */ }
+      try { console.log('[DriveDocs] boot · v260814b'); } catch (e) { /* ignore */ }
       // 立刻顯示介面（不等伺服器）
       state.app = {
-        appVersion: '260814a',
+        appVersion: '260814b',
         user: { name: '楊以寧', display: '楊以寧', role: '', email: '' },
         settings: { rootFolderName: '客戶資料', categories: DEFAULT_CATEGORIES_CLIENT_.slice() },
         initialized: true
@@ -2398,7 +2398,7 @@
         animateBars(content);
       }).catch(function (e2) {
         $('content').innerHTML = '<div class="card card__bd"><p>' + escapeHtml((err && err.message) || e2.message || e2) +
-          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260814a。</p></div>';
+          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260814b。</p></div>';
       });
     });
     return p;

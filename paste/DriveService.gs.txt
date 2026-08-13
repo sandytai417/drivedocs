@@ -1,5 +1,7 @@
 /**
  * DriveDocs — 客戶 CRUD（含手動完成度、續保、進階搜尋）
+ * 請整份覆蓋 Apps Script 的 DriveService.gs（不要只貼一段）。
+ * 正確貼上後，檔案最後一行應為：// END DriveService.gs
  */
 
 /** 是否為「保單」文件類型 */
@@ -116,55 +118,55 @@ function listCustomers(sortBy) {
 
 function getCustomer(id, opts) {
   opts = opts || {};
-  // 預設不掃 Drive（詳情進場快）；sheet 欄位仍完整讀取（含備註）
   var skipFiles = opts.skipFiles !== false;
   if (opts.skipFiles === false) skipFiles = false;
   var categories = getCategoryTemplate_();
   var rows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
+  var row = null;
   for (var i = 0; i < rows.length; i++) {
     if (String(rows[i].id) === String(id)) {
-      var c = customerFromRow_(rows[i], { categories: categories, light: !!opts.light });
-      if (opts.withNotes || opts.light) {
-        // light 時 notes 被清空；詳情／備註分頁需要補回（sheet 已在記憶體，成本極低）
-        c.notes = String(rows[i].notes || '');
-        c.tags = parseJsonSafe_(rows[i].tags, []);
-      }
-      c.policyFileCount = policyFileCountFromMeta_(c.folderMeta);
-      c.isRenewal = isRenewalFromMeta_(c.folderMeta);
-
-      var filesByCategory = {};
-      categories.forEach(function (cat) { filesByCategory[cat] = []; });
-
-      // 舊參數相容：withFiles=true 時仍可一次載入，但預設不做
-      if (!skipFiles && c.folderId) {
-        filesByCategory = listCustomerFilesGrouped_(c.folderId);
-        var fileCount = 0;
-        categories.forEach(function (cat) {
-          var files = filesByCategory[cat] || [];
-          filesByCategory[cat] = files;
-          fileCount += files.length;
-          if (c.folderMeta[cat]) c.folderMeta[cat].count = files.length;
-        });
-        c.fileCount = fileCount;
-        return {
-          customer: c,
-          categories: categories,
-          filesByCategory: filesByCategory,
-          folderMeta: c.folderMeta,
-          filesLoaded: true
-        };
-      }
-
-      return {
-        customer: c,
-        categories: categories,
-        filesByCategory: filesByCategory,
-        folderMeta: c.folderMeta,
-        filesLoaded: false
-      };
+      row = rows[i];
+      break;
     }
   }
-  throw new Error('找不到客戶：' + id);
+  if (!row) throw new Error('找不到客戶：' + id);
+
+  var c = customerFromRow_(row, { categories: categories, light: !!opts.light });
+  if (opts.withNotes || opts.light) {
+    c.notes = String(row.notes || '');
+    c.tags = parseJsonSafe_(row.tags, []);
+  }
+  c.policyFileCount = policyFileCountFromMeta_(c.folderMeta);
+  c.isRenewal = isRenewalFromMeta_(c.folderMeta);
+
+  var filesByCategory = {};
+  var cat;
+  for (var k = 0; k < categories.length; k++) {
+    filesByCategory[categories[k]] = [];
+  }
+
+  var filesLoaded = false;
+  if (!skipFiles && c.folderId) {
+    filesByCategory = listCustomerFilesGrouped_(c.folderId);
+    var fileCount = 0;
+    for (k = 0; k < categories.length; k++) {
+      cat = categories[k];
+      var files = filesByCategory[cat] || [];
+      filesByCategory[cat] = files;
+      fileCount += files.length;
+      if (c.folderMeta[cat]) c.folderMeta[cat].count = files.length;
+    }
+    c.fileCount = fileCount;
+    filesLoaded = true;
+  }
+
+  return {
+    customer: c,
+    categories: categories,
+    filesByCategory: filesByCategory,
+    folderMeta: c.folderMeta,
+    filesLoaded: filesLoaded
+  };
 }
 
 /** 點開某一分類才載檔（詳情加速關鍵） */
@@ -511,3 +513,5 @@ function bumpReport_(field, delta) {
   row[field] = delta;
   appendObject_(CONFIG.SHEETS.REPORTS, row);
 }
+
+// END DriveService.gs

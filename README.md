@@ -64,7 +64,7 @@ npx clasp login
 npx clasp push
 ```
 
-部署為網頁應用程式後，文件會直寫 Google Drive。版本：`v260814a`。
+部署為網頁應用程式後，文件會直寫 Google Drive。版本：`v260814b`。
 
 ---
 
