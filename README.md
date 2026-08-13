@@ -55,7 +55,7 @@ python3 -m http.server 8080
 
 ## 正式版（Apps Script）
 
-見 [`apps-script/`](apps-script/)：客戶文件**只依資料日期分夾**，Drive 刪除資料夾後網站會同步移除索引。
+見 [`apps-script/`](apps-script/)：正式版沿用原本分類資料夾介面，並以快取與延遲載入縮短開啟時間。
 
 ```bash
 cd apps-script
@@ -64,7 +64,7 @@ npx clasp login
 npx clasp push
 ```
 
-部署為網頁應用程式後，文件會直寫 Google Drive。版本：`v260813r`。
+部署為網頁應用程式後，文件會直寫 Google Drive。版本：`v260813s`。
 
 ---
 

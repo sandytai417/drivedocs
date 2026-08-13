@@ -6,11 +6,14 @@ function getDashboard() {
   return getHomePayload_().dashboard;
 }
 
+/**
+ * 首頁一次回傳：儀表板 + 客戶列表（避免雙重讀表／雙重 round-trip）
+ */
 function getHomePayload() {
   return getHomePayload_();
 }
 
-/** 首頁專用極速列轉換 */
+/** 首頁專用極速列轉換（少算、少字串、小 JSON） */
 function customerFromRowHomeFast_(row) {
   var name = String(row.name || '');
   var completion = Number(row.completion);
@@ -55,25 +58,23 @@ function customerFromRowHomeFast_(row) {
     completion: completion,
     status: String(row.status || deriveStatus_(completion)),
     fileCount: fileCount,
-    isRenewal: typeof isRenewalFromMeta_ === 'function'
-      ? (isRenewalFromMeta_(folderMeta) || fileCount >= 2)
-      : fileCount >= 2,
+    isRenewal: typeof isRenewalFromMeta_ === 'function' ? isRenewalFromMeta_(folderMeta) : fileCount > 1,
     zhuyin: zhuyin,
     folderId: String(row.folderId || ''),
-    folderMeta: folderMeta
+    folderMeta: folderMeta,
+    _meta: folderMeta
   };
 }
 
 function getHomePayload_() {
-  var cached = sharedGetJson_('homePayload_v3');
+  var cached = sharedGetJson_('homePayload_v4');
   if (cached && cached.dashboard && cached.customers) {
     return cached;
   }
-  var mem = cacheGet_('homePayload_v3');
+  var mem = cacheGet_('homePayload_v4');
   if (mem && mem.dashboard && mem.customers) return mem;
 
-  // 輕量同步：Drive 刪夾 → 網站索引（有 60s 快取）
-  try { syncCustomersWithDrive_({ force: false }); } catch (eSync) { /* ignore */ }
+  var categories = getCategoryTemplate_();
 
   var rows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
   var full = [];
@@ -85,6 +86,10 @@ function getHomePayload_() {
       ? compareByZhuyin(a.name, b.name)
       : String(a.name).localeCompare(String(b.name), 'zh-Hant');
   });
+
+  for (i = 0; i < full.length; i++) {
+    delete full[i]._meta;
+  }
 
   var birthdays = listBirthdaysFromCustomers_(full);
   var bdayCustomers = (birthdays.customers || []).map(function (b) {
@@ -123,8 +128,7 @@ function getHomePayload_() {
   var dashboard = {
     totalCustomers: customers.length,
     todayOrganized: report.organized || 0,
-    categories: [],
-    organizeBy: 'date',
+    categories: categories,
     birthdaysThisWeek: {
       weekLabel: birthdays.weekLabel || '',
       count: bdayCustomers.length,
@@ -141,8 +145,8 @@ function getHomePayload_() {
       initials: ZHUYIN_ORDER.filter(function (z) { return z !== '#'; })
     }
   };
-  cacheSet_('homePayload_v3', payload);
-  sharedPutJson_('homePayload_v3', payload, 300);
+  cacheSet_('homePayload_v4', payload);
+  sharedPutJson_('homePayload_v4', payload, 300);
   return payload;
 }
 

@@ -73,12 +73,15 @@ function invalidateSheetCache_(sheetName) {
   cacheDel_('homePayload');
   cacheDel_('homePayload_v2');
   cacheDel_('homePayload_v3');
+  cacheDel_('homePayload_v4');
   sharedRemove_('homePayload');
   sharedRemove_('homePayload_v2');
   sharedRemove_('homePayload_v3');
+  sharedRemove_('homePayload_v4');
   sharedRemove_('bootPayload');
   sharedRemove_('bootPayload_v2');
   sharedRemove_('bootPayload_v3');
+  sharedRemove_('bootPayload_v4');
   sharedRemove_('driveSyncResult_v1');
 }
 

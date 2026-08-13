@@ -1,9 +1,10 @@
 /**
  * DriveDocs — Setting.gs（設定與 API）
- * 請整份覆蓋 Apps Script 的「Setting」
+ * 請整份覆蓋 Apps Script 的「Setting」或「SettingsService」
  */
 
 function initializeWorkspace() {
+  // —— 1) 試算表 ——
   var ss = null;
   try {
     ss = getSpreadsheet_();
@@ -24,6 +25,7 @@ function initializeWorkspace() {
   if (!ssId) throw new Error('初始化失敗：試算表 getId() 失敗');
   setProp_(CONFIG.PROP_KEYS.SPREADSHEET_ID, ssId);
 
+  // —— 2) Drive 根目錄（不依賴 getSetting，避免初始化雞生蛋）——
   var root = ensureRootFolderForInit_();
   if (!root) throw new Error('初始化失敗：Drive 根目錄仍為空（請確認已授權 Google Drive）');
 
@@ -32,10 +34,12 @@ function initializeWorkspace() {
   if (!rootId) throw new Error('初始化失敗：根目錄 getId() 失敗');
   setProp_(CONFIG.PROP_KEYS.ROOT_FOLDER_ID, rootId);
 
+  // —— 3) 預設設定（此時試算表已可用）——
   try {
-    // 清除舊分類設定，改為日期分夾
-    setSetting('categories', []);
-    setSetting('organizeBy', 'date');
+    var cats = getSetting('categories', null);
+    if (!cats || !cats.length) {
+      setSetting('categories', CONFIG.DEFAULT_CATEGORIES.slice());
+    }
     if (!getSetting('rootFolderName', null)) {
       setSetting('rootFolderName', CONFIG.DEFAULT_ROOT_NAME || '客戶資料');
     }
@@ -50,6 +54,9 @@ function initializeWorkspace() {
   return getAppState();
 }
 
+/**
+ * 初始化專用：只靠 CONFIG / Properties，不呼叫 getSetting
+ */
 function ensureRootFolderForInit_() {
   var id = '';
   try { id = getProp_(CONFIG.PROP_KEYS.ROOT_FOLDER_ID) || ''; } catch (e) { id = ''; }
@@ -57,7 +64,7 @@ function ensureRootFolderForInit_() {
   if (id) {
     try {
       var existing = DriveApp.getFolderById(id);
-      if (existing && !existing.isTrashed()) return existing;
+      if (existing) return existing;
     } catch (e) {
       try { setProp_(CONFIG.PROP_KEYS.ROOT_FOLDER_ID, ''); } catch (ignore) {}
     }
@@ -66,7 +73,7 @@ function ensureRootFolderForInit_() {
   var name = '客戶資料';
   try {
     if (CONFIG && CONFIG.DEFAULT_ROOT_NAME) name = String(CONFIG.DEFAULT_ROOT_NAME).trim() || name;
-  } catch (e) { /* keep */ }
+  } catch (e) { /* keep default */ }
 
   var folder = null;
   try {
@@ -115,11 +122,11 @@ function getAppState() {
     },
     settings: settings,
     supportedExt: (CONFIG && CONFIG.SUPPORTED_EXT) || [],
-    privateSingleUser: true,
-    organizeBy: 'date'
+    privateSingleUser: true
   };
 }
 
+/** 強制去掉職稱字樣（保險業務員等） */
 function cleanOwnerName_(s) {
   var name = String(s == null ? '' : s).trim() || '楊以寧';
   name = name
@@ -132,16 +139,17 @@ function cleanOwnerName_(s) {
   return name || '楊以寧';
 }
 
+/** 啟動用輕量設定：不呼叫 DriveApp */
 function getSettingsLite_() {
   var rootId = getProp_(CONFIG.PROP_KEYS.ROOT_FOLDER_ID) || '';
   var ssId = getProp_(CONFIG.PROP_KEYS.SPREADSHEET_ID) || '';
+  var categories = getCategoryTemplate_();
   return {
     rootFolderName: getSetting('rootFolderName', CONFIG.DEFAULT_ROOT_NAME),
     rootFolderId: rootId,
     rootFolderUrl: rootId ? ('https://drive.google.com/drive/folders/' + rootId) : '',
-    categories: [],
-    organizeBy: 'date',
-    defaultDocCategory: '',
+    categories: categories,
+    defaultDocCategory: defaultDocCategory_(categories),
     namingRule: getSetting('namingRule', '{name}'),
     birthdayReminderEnabled: !!getSetting('birthdayReminderEnabled', false),
     birthdayReminderSchedule: '每週一 09:00（台北時間）',
@@ -167,9 +175,11 @@ function saveSettings(data) {
       if (f) f.setName(String(data.rootFolderName).trim());
     } catch (e) { /* ignore */ }
   }
-  // 不再接受文件類型分類
-  setSetting('categories', []);
-  setSetting('organizeBy', 'date');
+  if (data.categories && data.categories.length) {
+    var cleaned = data.categories.map(function (c) { return String(c).trim(); }).filter(Boolean);
+    if (!cleaned.length) throw new Error('至少需要一個文件分類');
+    setSetting('categories', cleaned);
+  }
   if (data.namingRule !== undefined) {
     setSetting('namingRule', String(data.namingRule));
   }
@@ -185,6 +195,7 @@ function ensureReady_() {
   if (!isInitialized()) {
     throw new Error('請先初始化 DriveDocs 工作區');
   }
+  // 若標記已初始化但試算表遺失，嘗試自動修復
   try {
     getSpreadsheet_();
   } catch (e) {
@@ -193,10 +204,12 @@ function ensureReady_() {
 }
 
 /**
- * 啟動一次到位：自動初始化 + App 狀態 + 首頁 + Drive 同步
+ * 啟動一次到位：自動初始化（若需要）+ App 狀態 + 首頁資料
+ * 前端冷啟動只打這支，避免 api_getAppState → api_getHome 雙 round-trip
  */
 function bootWorkspace() {
-  var cachedBoot = sharedGetJson_('bootPayload_v3');
+  // 整包 boot 快取：重複開啟幾乎零等待（不掃 Drive，加快載入）
+  var cachedBoot = sharedGetJson_('bootPayload_v4');
   if (cachedBoot && cachedBoot.app && cachedBoot.home) {
     return cachedBoot;
   }
@@ -214,9 +227,13 @@ function bootWorkspace() {
     }
   }
 
-  // Drive → 網站同步（刪夾即清索引；有短快取）
-  var sync = { removed: 0, checked: 0, ids: [] };
-  try { sync = syncCustomersWithDrive_({ force: false }); } catch (eS) { /* ignore */ }
+  // 若先前被清空分類設定，恢復預設模板（只在空的時候寫入）
+  try {
+    var catsNow = getSetting('categories', null);
+    if (!catsNow || !catsNow.length) {
+      setSetting('categories', CONFIG.DEFAULT_CATEGORIES.slice());
+    }
+  } catch (eCat) { /* ignore */ }
 
   var app = getAppState();
   var home = null;
@@ -235,14 +252,13 @@ function bootWorkspace() {
     activities: activities,
     weekLabel: weekLabel,
     activityPathHint: activityPathHint,
-    sync: sync,
     appVersion: (CONFIG && CONFIG.APP_VERSION) || '',
     paths: (CONFIG && CONFIG.DRIVE_PATHS) || {
-      CUSTOMERS: '我的雲端硬碟／客戶資料／客戶／{注音}／{客戶姓名}／{資料日期}／',
+      CUSTOMERS: '我的雲端硬碟／客戶資料／客戶／{注音}／{客戶姓名}／{資料日期}／{文件類型}',
       ACTIVITIES: '我的雲端硬碟／{年}／{N}月活動／{Y}年{M}月第W週活動'
     }
   };
-  sharedPutJson_('bootPayload_v3', payload, 120);
+  sharedPutJson_('bootPayload_v4', payload, 180);
   return payload;
 }
 
@@ -255,8 +271,6 @@ function api_syncDrive(force) {
   ensureReady_();
   var res = syncCustomersWithDrive_({ force: !!force });
   invalidateSheetCache_(CONFIG.SHEETS.CUSTOMERS);
-  sharedRemove_('bootPayload_v3');
-  sharedRemove_('homePayload_v3');
   return res;
 }
 function api_getDashboard() { ensureReady_(); return getDashboard(); }
@@ -266,35 +280,9 @@ function api_getCustomer(id, withFiles) {
   ensureReady_();
   return getCustomer(id, { skipFiles: withFiles === false });
 }
-function api_listCustomerCategoryFiles(customerId, dateName) {
+function api_listCustomerCategoryFiles(customerId, categoryName) {
   ensureReady_();
-  return listCustomerDateFiles(customerId, dateName);
-}
-function api_listCustomerDateFiles(customerId, dateName) {
-  ensureReady_();
-  return listCustomerDateFiles(customerId, dateName);
-}
-function api_listCustomerDates(customerId) {
-  ensureReady_();
-  var detail = getCustomer(customerId, { skipFiles: true, light: true });
-  var c = detail.customer;
-  if (!c.folderId) return { dates: [] };
-  var dates = listCustomerDateKeys_(c.folderId);
-  // 回寫 folderMeta 日期鍵，加速下次開啟
-  var meta = c.folderMeta || {};
-  var changed = false;
-  dates.forEach(function (d) {
-    if (!meta[d]) {
-      meta[d] = { done: true, count: 0 };
-      changed = true;
-    }
-  });
-  if (changed) {
-    updateObjectById_(CONFIG.SHEETS.CUSTOMERS, customerId, {
-      folderMeta: JSON.stringify(meta)
-    });
-  }
-  return { dates: dates, folderMeta: meta };
+  return listCustomerCategoryFiles(customerId, categoryName);
 }
 function api_createCustomer(data) {
   ensureReady_();
@@ -310,9 +298,9 @@ function api_ensureCustomer(data) {
 }
 function api_updateCustomer(id, data) { ensureReady_(); return updateCustomer(id, data); }
 function api_deleteCustomer(id) { ensureReady_(); return deleteCustomer(id); }
-function api_updateFolderMeta(customerId, dateKey, patch) {
+function api_updateFolderMeta(customerId, category, patch) {
   ensureReady_();
-  return updateFolderMeta(customerId, dateKey, patch);
+  return updateFolderMeta(customerId, category, patch);
 }
 function api_search(query) { ensureReady_(); return searchAll(query); }
 function api_uploadDocument(payload) { ensureReady_(); return uploadDocument(payload); }

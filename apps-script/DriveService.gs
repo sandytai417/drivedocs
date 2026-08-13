@@ -1,17 +1,13 @@
 /**
- * DriveDocs — 客戶 CRUD（日期分夾 · Drive 刪除同步）
+ * DriveDocs — 客戶 CRUD（含手動完成度、續保、進階搜尋）
  */
 
-/** 續保：檔案數 ≥ 2 */
-function isRenewalFromCount_(fileCount) {
-  return (Number(fileCount) || 0) >= 2;
-}
-
-/** 相容舊 folderMeta（分類鍵）與新（日期鍵） */
+/** 是否為「保單」文件類型 */
 function isPolicyCategory_(name) {
   return String(name || '').indexOf('保單') >= 0;
 }
 
+/** 保單檔案數（續保判斷用） */
 function policyFileCountFromMeta_(folderMeta) {
   folderMeta = folderMeta || {};
   var n = 0;
@@ -21,24 +17,19 @@ function policyFileCountFromMeta_(folderMeta) {
   return n;
 }
 
+/** 續保：保單資料夾至少 2 個檔案 */
 function isRenewalFromMeta_(folderMeta) {
-  folderMeta = folderMeta || {};
-  var total = 0;
-  Object.keys(folderMeta).forEach(function (k) {
-    total += Number(folderMeta[k].count) || 0;
-  });
-  if (total >= 2) return true;
   return policyFileCountFromMeta_(folderMeta) >= 2;
 }
 
-function bumpFolderMetaCount_(folderMeta, dateKey, delta) {
+function bumpFolderMetaCount_(folderMeta, category, delta) {
   folderMeta = folderMeta || {};
-  dateKey = normalizeDocDate_(dateKey || todayStr_());
-  if (!folderMeta[dateKey]) {
-    folderMeta[dateKey] = { done: false, count: 0 };
+  category = String(category || '').trim();
+  if (!category) return folderMeta;
+  if (!folderMeta[category]) {
+    folderMeta[category] = { done: false, count: 0 };
   }
-  folderMeta[dateKey].count = Math.max(0, (Number(folderMeta[dateKey].count) || 0) + Number(delta || 0));
-  folderMeta[dateKey].done = folderMeta[dateKey].count > 0;
+  folderMeta[category].count = Math.max(0, (Number(folderMeta[category].count) || 0) + Number(delta || 0));
   return folderMeta;
 }
 
@@ -51,12 +42,15 @@ function customerFromRow_(row, opts) {
   }
   if (!Array.isArray(tags)) tags = [];
 
-  var folderMeta = parseJsonSafe_(row.folderMeta, null) || {};
-  if (!folderMeta || typeof folderMeta !== 'object') folderMeta = {};
+  var categories = opts.categories || getCategoryTemplate_();
+  var folderMeta = parseJsonSafe_(row.folderMeta, null) || defaultFolderMeta_(categories);
+  categories.forEach(function (cat) {
+    if (!folderMeta[cat]) folderMeta[cat] = { done: false, count: 0 };
+  });
 
   var completion = Number(row.completion);
   if (isNaN(completion)) {
-    completion = computeManualCompletion_(folderMeta, []).percent;
+    completion = computeManualCompletion_(folderMeta, categories).percent;
   }
   var fileCount = Number(row.fileCount) || 0;
   var name = String(row.name || '');
@@ -80,10 +74,11 @@ function customerFromRow_(row, opts) {
     status: String(row.status || deriveStatus_(completion)),
     fileCount: fileCount,
     policyFileCount: policyFileCountFromMeta_(folderMeta),
-    isRenewal: isRenewalFromMeta_(folderMeta) || isRenewalFromCount_(fileCount),
+    isRenewal: isRenewalFromMeta_(folderMeta),
     zhuyin: String(row.zhuyin || getZhuyinInitial(name)),
     givenZhuyin: light ? '' : getGivenNameZhuyin(name)
   };
+  // 列表／首頁：拿掉 folderMeta，大幅縮小 JSON（完成度已算好；續保已算好）
   if (opts.compact) {
     delete out.tags;
     delete out.notes;
@@ -92,17 +87,16 @@ function customerFromRow_(row, opts) {
   return out;
 }
 
-function customerFromRowCompact_(row) {
-  return customerFromRow_(row, { light: true, compact: true });
+/** 首頁／列表用：先算 typeStats 再 compact */
+function customerFromRowCompact_(row, categories) {
+  return customerFromRow_(row, { categories: categories, light: true, compact: true });
 }
 
 function listCustomers(sortBy) {
-  // 列表前輕量同步（60 秒內有快取）
-  try { syncCustomersWithDrive_({ force: false }); } catch (e) { /* ignore */ }
-
   sortBy = sortBy || 'zhuyin';
+  var categories = getCategoryTemplate_();
   var rows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS).map(function (r) {
-    return customerFromRow_(r, { light: true, compact: true });
+    return customerFromRow_(r, { categories: categories, light: true, compact: true });
   });
   if (sortBy === 'updated') {
     rows.sort(function (a, b) { return String(b.updatedAt).localeCompare(String(a.updatedAt)); });
@@ -121,66 +115,49 @@ function listCustomers(sortBy) {
 
 function getCustomer(id, opts) {
   opts = opts || {};
+  // 預設不掃 Drive（詳情進場快）；sheet 欄位仍完整讀取（含備註）
   var skipFiles = opts.skipFiles !== false;
   if (opts.skipFiles === false) skipFiles = false;
-
+  var categories = getCategoryTemplate_();
   var rows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
   for (var i = 0; i < rows.length; i++) {
     if (String(rows[i].id) === String(id)) {
-      var c = customerFromRow_(rows[i], { light: !!opts.light });
+      var c = customerFromRow_(rows[i], { categories: categories, light: !!opts.light });
       if (opts.withNotes || opts.light) {
+        // light 時 notes 被清空；詳情／備註分頁需要補回（sheet 已在記憶體，成本極低）
         c.notes = String(rows[i].notes || '');
         c.tags = parseJsonSafe_(rows[i].tags, []);
       }
-
-      // Drive 資料夾已刪 → 同步移除並報錯
-      if (c.folderId && !folderExists_(c.folderId)) {
-        deleteObjectById_(CONFIG.SHEETS.CUSTOMERS, c.id);
-        throw new Error('此客戶的 Drive 資料夾已刪除，已從網站同步移除');
-      }
-
       c.policyFileCount = policyFileCountFromMeta_(c.folderMeta);
-      c.isRenewal = isRenewalFromMeta_(c.folderMeta) || isRenewalFromCount_(c.fileCount);
+      c.isRenewal = isRenewalFromMeta_(c.folderMeta);
 
-      var dates = [];
-      var filesByDate = {};
+      var filesByCategory = {};
+      categories.forEach(function (cat) { filesByCategory[cat] = []; });
 
+      // 舊參數相容：withFiles=true 時仍可一次載入，但預設不做
       if (!skipFiles && c.folderId) {
-        filesByDate = listCustomerFilesGrouped_(c.folderId);
-        dates = Object.keys(filesByDate).sort(function (a, b) {
-          return String(b).localeCompare(String(a));
-        });
+        filesByCategory = listCustomerFilesGrouped_(c.folderId);
         var fileCount = 0;
-        var meta = {};
-        dates.forEach(function (d) {
-          var files = filesByDate[d] || [];
+        categories.forEach(function (cat) {
+          var files = filesByCategory[cat] || [];
+          filesByCategory[cat] = files;
           fileCount += files.length;
-          meta[d] = { done: files.length > 0, count: files.length };
+          if (c.folderMeta[cat]) c.folderMeta[cat].count = files.length;
         });
         c.fileCount = fileCount;
-        c.folderMeta = meta;
         return {
           customer: c,
-          dates: dates,
-          categories: dates, // 舊前端相容：categories = 日期列表
-          filesByDate: filesByDate,
-          filesByCategory: filesByDate,
-          folderMeta: meta,
+          categories: categories,
+          filesByCategory: filesByCategory,
+          folderMeta: c.folderMeta,
           filesLoaded: true
         };
       }
 
-      dates = Object.keys(c.folderMeta || {}).filter(isDateFolderName_).sort(function (a, b) {
-        return String(b).localeCompare(String(a));
-      });
-      dates.forEach(function (d) { filesByDate[d] = []; });
-
       return {
         customer: c,
-        dates: dates,
-        categories: dates,
-        filesByDate: filesByDate,
-        filesByCategory: filesByDate,
+        categories: categories,
+        filesByCategory: filesByCategory,
         folderMeta: c.folderMeta,
         filesLoaded: false
       };
@@ -189,22 +166,17 @@ function getCustomer(id, opts) {
   throw new Error('找不到客戶：' + id);
 }
 
-/** 點開某一日期才載檔 */
-function listCustomerCategoryFiles(customerId, dateName) {
-  return listCustomerDateFiles(customerId, dateName);
-}
-
-function listCustomerDateFiles(customerId, dateName) {
+/** 點開某一分類才載檔（詳情加速關鍵） */
+function listCustomerCategoryFiles(customerId, categoryName) {
   var detail = getCustomer(customerId, { skipFiles: true, light: true });
   var c = detail.customer;
   if (!c.folderId) {
-    return { customerId: customerId, date: dateName, category: dateName, files: [] };
+    return { customerId: customerId, category: categoryName, files: [] };
   }
-  var files = listDateFiles(c.folderId, dateName);
+  var files = listCategoryFiles(c.folderId, categoryName);
   return {
     customerId: customerId,
-    date: dateName,
-    category: dateName,
+    category: categoryName,
     files: files
   };
 }
@@ -216,7 +188,12 @@ function pickCustomerName_(data) {
     return (direct && direct !== 'null' && direct !== 'undefined') ? direct : '';
   }
   var candidates = [
-    data.customerName, data.name, data.fullName, data['姓名'], data.Name, data.customer_name
+    data.customerName,
+    data.name,
+    data.fullName,
+    data['姓名'],
+    data.Name,
+    data.customer_name
   ];
   for (var i = 0; i < candidates.length; i++) {
     if (candidates[i] == null) continue;
@@ -227,6 +204,9 @@ function pickCustomerName_(data) {
   return '';
 }
 
+/**
+ * 依 id 或姓名取得客戶；沒有就建立。UI 不必再分「既有／新增」模式。
+ */
 function ensureCustomer(data) {
   if (typeof data === 'string') data = { name: data, customerName: data };
   data = data || {};
@@ -235,21 +215,20 @@ function ensureCustomer(data) {
   if (id) {
     try {
       return getCustomer(String(id)).customer;
-    } catch (e) { /* fall through */ }
+    } catch (e) {
+      // id 無效時改走姓名
+    }
   }
 
   var name = pickCustomerName_(data);
-  if (!name) throw new Error('請填寫客戶姓名');
+  if (!name) {
+    throw new Error('請填寫客戶姓名');
+  }
 
   var rows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
   for (var i = 0; i < rows.length; i++) {
     if (String(rows[i].name) === name) {
-      var existing = customerFromRow_(rows[i]);
-      if (existing.folderId && !folderExists_(existing.folderId)) {
-        deleteObjectById_(CONFIG.SHEETS.CUSTOMERS, existing.id);
-        break;
-      }
-      return existing;
+      return customerFromRow_(rows[i]);
     }
   }
   return createCustomer(data);
@@ -268,18 +247,17 @@ function createCustomer(data) {
   var existing = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
   for (var i = 0; i < existing.length; i++) {
     if (String(existing[i].name) === name) {
-      var hit = customerFromRow_(existing[i]);
-      if (hit.folderId && !folderExists_(hit.folderId)) {
-        deleteObjectById_(CONFIG.SHEETS.CUSTOMERS, hit.id);
-      } else {
-        return hit;
-      }
+      return customerFromRow_(existing[i]);
     }
   }
 
   var id = newId_();
   var now = nowIso_();
-  var folderMeta = {};
+  var categories = getCategoryTemplate_();
+  if (!categories || !categories.length) {
+    categories = CONFIG.DEFAULT_CATEGORIES.slice();
+  }
+  var folderMeta = defaultFolderMeta_(categories);
   var meta = {
     id: id,
     name: name,
@@ -350,18 +328,21 @@ function updateCustomer(id, data) {
   return getCustomer(id).customer;
 }
 
-/** 更新某日期資料夾狀態（舊名 updateFolderMeta 仍可用） */
-function updateFolderMeta(customerId, dateKey, patch) {
+/**
+ * 更新某分類的資料夾狀態（保留給舊資料相容）
+ */
+function updateFolderMeta(customerId, category, patch) {
+  // 輕量讀取，不要為了勾選完成度重掃 Drive
   var detail = getCustomer(customerId, { skipFiles: true });
   var c = detail.customer;
-  var meta = c.folderMeta || {};
-  dateKey = isDateFolderName_(dateKey) ? dateKey : normalizeDocDate_(dateKey);
-  if (!meta[dateKey]) meta[dateKey] = { done: false, count: 0 };
-  if (patch.done !== undefined) meta[dateKey].done = !!patch.done;
-  if (patch.count !== undefined) meta[dateKey].count = Number(patch.count) || 0;
+  var meta = c.folderMeta || defaultFolderMeta_(detail.categories);
+  if (!meta[category]) meta[category] = { done: false, count: 0 };
+  if (patch.done !== undefined) meta[category].done = !!patch.done;
 
-  var completion = computeManualCompletion_(meta, []);
-  var status = deriveStatus_(completion.percent, c.status === 'paused' ? 'paused' : '');
+  var completion = computeManualCompletion_(meta, detail.categories);
+  var status = c.status === 'paused' && !patch.done
+    ? 'paused'
+    : deriveStatus_(completion.percent, c.status === 'paused' && patch.done ? '' : (c.status === 'paused' ? 'paused' : ''));
 
   updateObjectById_(CONFIG.SHEETS.CUSTOMERS, customerId, {
     folderMeta: JSON.stringify(meta),
@@ -370,6 +351,17 @@ function updateFolderMeta(customerId, dateKey, patch) {
     updatedAt: nowIso_()
   });
 
+  if (c.folderId) {
+    try {
+      writeMetadata_(DriveApp.getFolderById(c.folderId), {
+        id: c.id,
+        name: c.name,
+        folderMeta: meta,
+        updatedAt: nowIso_()
+      });
+    } catch (e) { /* ignore */ }
+  }
+
   bumpReport_('updates', 1);
   if (patch.done) bumpReport_('organized', 1);
   c.folderMeta = meta;
@@ -377,11 +369,10 @@ function updateFolderMeta(customerId, dateKey, patch) {
   c.status = status;
   return {
     customer: c,
-    dates: Object.keys(meta),
-    categories: Object.keys(meta),
+    categories: detail.categories,
     folderMeta: meta,
     completion: completion,
-    filesByCategory: {},
+    filesByCategory: detail.filesByCategory || {},
     filesLoaded: false
   };
 }
@@ -395,7 +386,6 @@ function deleteCustomer(id) {
 }
 
 function searchAll(query) {
-  try { syncCustomersWithDrive_({ force: false }); } catch (e) { /* ignore */ }
   var q = String(query || '').trim().toLowerCase();
   if (!q) return { customers: [], files: [], query: query };
 
@@ -410,12 +400,12 @@ function searchAll(query) {
     ].join(' ').toLowerCase();
     var customerHit = hay.indexOf(q) !== -1;
     var fileHits = [];
-    if (c.folderId && folderExists_(c.folderId)) {
+    if (c.folderId) {
       try {
         listAllCustomerFiles(c.folderId).forEach(function (f) {
           if (
             String(f.name).toLowerCase().indexOf(q) !== -1 ||
-            String(f.docDate || f.category).toLowerCase().indexOf(q) !== -1
+            String(f.category).toLowerCase().indexOf(q) !== -1
           ) {
             fileHits.push({ customerId: c.id, customerName: c.name, file: f });
           }

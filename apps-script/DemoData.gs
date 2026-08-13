@@ -1,5 +1,5 @@
 /**
- * DriveDocs — 示範資料（真實建立 Drive 資料夾 · 日期分夾）
+ * DriveDocs — 示範資料（真實建立 Drive 資料夾）
  */
 
 function seedDemoData() {
@@ -32,23 +32,14 @@ function seedDemoData() {
   });
 
   if (wang && wang.folderId) {
-    var d1 = todayStr_();
-    var d2 = normalizeDocDate_(Utilities.formatDate(
-      new Date(Date.now() - 7 * 86400000), 'Asia/Taipei', 'yyyy-MM-dd'
-    ));
-    seedPlaceholder_(wang.folderId, d1, '身分證影本.pdf.txt', '示範檔：請替換成真實 PDF');
-    seedPlaceholder_(wang.folderId, d1, '保單.pdf.txt', '示範檔：保單');
-    seedPlaceholder_(wang.folderId, d2, '要保書.pdf.txt', '示範檔：要保書');
-    seedPlaceholder_(wang.folderId, d2, '財務健檢摘要.pdf.txt', '示範檔');
-    var meta = {};
-    meta[d1] = { done: true, count: 2 };
-    meta[d2] = { done: true, count: 2 };
-    updateObjectById_(CONFIG.SHEETS.CUSTOMERS, wang.id, {
-      folderMeta: JSON.stringify(meta),
-      fileCount: 4,
-      updatedAt: nowIso_()
-    });
-    logActivity_(wang.id, '王大明', 'upload', '上傳新文件 · 王大明 · ' + d1 + ' · 保單.pdf');
+    seedPlaceholder_(wang.folderId, '01 基本資料', '身分證影本.pdf.txt', '示範檔：請替換成真實 PDF');
+    seedPlaceholder_(wang.folderId, '02 保單', '保單.pdf.txt', '示範檔：保單');
+    seedPlaceholder_(wang.folderId, '02 保單', '要保書.pdf.txt', '示範檔：要保書');
+    seedPlaceholder_(wang.folderId, '05 財務規劃', '財務健檢摘要.pdf.txt', '示範檔');
+    updateFolderMeta(wang.id, '01 基本資料', { required: true, done: true });
+    updateFolderMeta(wang.id, '02 保單', { required: true, done: true });
+    getCustomer(wang.id); // refresh fileCount
+    logActivity_(wang.id, '王大明', 'upload', '上傳新文件 · 王大明 · 保單.pdf');
   }
 
   if (!listLectures().length) {
@@ -71,13 +62,14 @@ function seedDemoData() {
   return {
     created: created.length,
     total: sheetToObjects_(CONFIG.SHEETS.CUSTOMERS).length,
-    message: '已匯入示範客戶 ' + created.length + ' 位（含 Drive 日期資料夾）'
+    message: '已匯入示範客戶 ' + created.length + ' 位（含 Drive 資料夾）'
   };
 }
 
+/** 把「王大明」生日對齊本週某一天，方便示範壽星提醒 */
 function seedAlignBirthdayThisWeek_() {
   var week = getWeekRangeTaipei_();
-  var md = week.days[Math.min(2, week.days.length - 1)].md;
+  var md = week.days[Math.min(2, week.days.length - 1)].md; // 週三優先
   var parts = md.split('-');
   var bday = '1980-' + parts[0] + '-' + parts[1];
   var rows = sheetToObjects_(CONFIG.SHEETS.CUSTOMERS);
@@ -89,8 +81,9 @@ function seedAlignBirthdayThisWeek_() {
   }
 }
 
-function seedPlaceholder_(folderId, docDate, fileName, content) {
-  var dateFolder = ensureDateFolder_(folderId, docDate);
-  if (dateFolder.getFilesByName(fileName).hasNext()) return;
-  dateFolder.createFile(Utilities.newBlob(content, 'text/plain', fileName));
+function seedPlaceholder_(folderId, category, fileName, content) {
+  var dateFolder = ensureCategoryDateFolder_(folderId, category, todayStr_());
+  var cat = dateFolder;
+  if (cat.getFilesByName(fileName).hasNext()) return;
+  cat.createFile(Utilities.newBlob(content, 'text/plain', fileName));
 }

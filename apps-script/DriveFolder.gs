@@ -1,7 +1,8 @@
 /**
- * DriveDocs — Drive 資料夾層（日期分夾，無文件類型分類）
- * 路徑：客戶資料／客戶／{注音}／{客戶姓名}／{資料日期}／檔案
- * Drive 是資料庫：刪除 Drive 資料夾後，網站索引會同步清除。
+ * DriveDocs — Drive 資料夾層
+ * 路徑：客戶資料／客戶／{注音}／{客戶姓名}／{文件類型}／{資料日期}／檔案
+ * （畫面依文件類型分卡；Drive 內再依資料日期分子夾）
+ * Drive 是資料庫：刪除客戶資料夾後，可用同步清除網站索引。
  */
 
 function findOrCreateSubfolder_(parent, name) {
@@ -37,7 +38,7 @@ function getCustomersBucketFolder_() {
 
 /**
  * 建立客戶資料夾：客戶資料／客戶／{注音}／{姓名}
- * 不再建立文件類型子資料夾。
+ * 不預建分類夾（上傳時才建），加快新增客戶。
  */
 function createCustomerFolderTree(customerName, metadata) {
   var bucket = getCustomersBucketFolder_();
@@ -71,7 +72,6 @@ function renameCustomerFolder(folderId, newName) {
   var oldName = folder.getName();
   if (oldName === newName) return;
 
-  // 若注音改變，搬到正確注音資料夾
   var newZh = getZhuyinInitial(newName);
   var parents = folder.getParents();
   var parent = parents.hasNext() ? parents.next() : null;
@@ -113,90 +113,58 @@ function normalizeDocDate_(raw) {
   return todayStr_();
 }
 
-/** 客戶資料夾／{資料日期} */
-function ensureDateFolder_(customerFolderId, docDate) {
-  var dateName = normalizeDocDate_(docDate);
-  var customerFolder = DriveApp.getFolderById(customerFolderId);
-  return findOrCreateSubfolder_(customerFolder, dateName);
-}
-
-/** 舊名相容：忽略 category，只建日期夾 */
-function ensureCategoryDateFolder_(customerFolderId, category, docDate) {
-  return ensureDateFolder_(customerFolderId, docDate);
-}
-
 function isDateFolderName_(name) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(name || ''));
 }
 
-/**
- * 列出客戶底下的日期資料夾（新）與舊版「分類／日期」結構中的日期。
- * @return {string[]} yyyy-MM-dd 降序
- */
-function listCustomerDateKeys_(customerFolderId) {
+/** 客戶／{文件類型}／{資料日期} */
+function ensureCategoryDateFolder_(customerFolderId, category, docDate) {
+  var catName = String(category || '').trim() || defaultDocCategory_();
+  var dateName = normalizeDocDate_(docDate);
   var customerFolder = DriveApp.getFolderById(customerFolderId);
-  var dates = {};
-  var subs = customerFolder.getFolders();
-  while (subs.hasNext()) {
-    var sub = subs.next();
-    if (sub.isTrashed()) continue;
-    var name = sub.getName();
-    if (name === 'metadata.json') continue;
-    if (isDateFolderName_(name)) {
-      dates[name] = true;
-      continue;
-    }
-    // 舊結構：分類夾底下再放日期
-    var nested = sub.getFolders();
-    while (nested.hasNext()) {
-      var d = nested.next();
-      if (!d.isTrashed() && isDateFolderName_(d.getName())) {
-        dates[d.getName()] = true;
-      }
-    }
+  var catFolder = findOrCreateSubfolder_(customerFolder, catName);
+  return findOrCreateSubfolder_(catFolder, dateName);
+}
+
+/** 相容舊呼叫：若誤當日期夾用，仍建分類／日期 */
+function ensureDateFolder_(customerFolderId, docDate) {
+  return ensureCategoryDateFolder_(customerFolderId, defaultDocCategory_(), docDate);
+}
+
+function pushFolderFiles_(folder, categoryName, dateName, result, seen) {
+  var files = folder.getFiles();
+  while (files.hasNext()) {
+    var f = files.next();
+    if (f.isTrashed()) continue;
+    if (f.getName() === 'metadata.json') continue;
+    if (seen[f.getId()]) continue;
+    seen[f.getId()] = true;
+    var dto = fileToDto_(f, categoryName);
+    dto.docDate = dateName || dto.docDate || '';
+    result.push(dto);
   }
-  return Object.keys(dates).sort(function (a, b) {
-    return String(b).localeCompare(String(a));
-  });
 }
 
 /**
- * 列出某日期資料夾內的檔案（相容舊：分類／日期／檔案）
+ * 列出某分類下所有檔案（分類／日期／檔；相容日期夾直接在客戶根目錄）
  */
-function listDateFiles(customerFolderId, docDate) {
-  var dateName = normalizeDocDate_(docDate);
+function listCategoryFiles(customerFolderId, categoryName) {
+  categoryName = String(categoryName || '').trim();
   var customerFolder = DriveApp.getFolderById(customerFolderId);
   var result = [];
   var seen = {};
 
-  function pushFiles_(folder) {
-    var files = folder.getFiles();
-    while (files.hasNext()) {
-      var f = files.next();
-      if (f.isTrashed()) continue;
-      if (f.getName() === 'metadata.json') continue;
-      if (seen[f.getId()]) continue;
-      seen[f.getId()] = true;
-      var dto = fileToDto_(f, dateName);
-      dto.docDate = dateName;
-      result.push(dto);
-    }
-  }
-
-  // 新結構：客戶／日期
-  var direct = customerFolder.getFoldersByName(dateName);
-  while (direct.hasNext()) {
-    pushFiles_(direct.next());
-  }
-
-  // 舊結構：客戶／分類／日期
-  var cats = customerFolder.getFolders();
-  while (cats.hasNext()) {
-    var cat = cats.next();
-    if (cat.isTrashed() || isDateFolderName_(cat.getName())) continue;
-    var dates = cat.getFoldersByName(dateName);
+  var subs = customerFolder.getFoldersByName(categoryName);
+  while (subs.hasNext()) {
+    var cat = subs.next();
+    if (cat.isTrashed()) continue;
+    pushFolderFiles_(cat, categoryName, '', result, seen);
+    var dates = cat.getFolders();
     while (dates.hasNext()) {
-      pushFiles_(dates.next());
+      var d = dates.next();
+      if (d.isTrashed()) continue;
+      var dateName = isDateFolderName_(d.getName()) ? d.getName() : '';
+      pushFolderFiles_(d, categoryName, dateName, result, seen);
     }
   }
 
@@ -206,60 +174,55 @@ function listDateFiles(customerFolderId, docDate) {
   return result;
 }
 
-/** 舊 API 名：categoryName 現在當資料日期用 */
-function listCategoryFiles(customerFolderId, categoryName) {
-  if (isDateFolderName_(categoryName) || /^\d{4}/.test(String(categoryName || ''))) {
-    return listDateFiles(customerFolderId, categoryName);
-  }
-  // 舊呼叫若仍傳分類名：回傳該分類下所有檔（相容）
-  var customerFolder = DriveApp.getFolderById(customerFolderId);
-  var subs = customerFolder.getFoldersByName(categoryName);
-  if (!subs.hasNext()) return [];
-  var cat = subs.next();
-  var result = [];
-  var dates = cat.getFolders();
-  while (dates.hasNext()) {
-    var d = dates.next();
-    if (d.isTrashed()) continue;
-    var files = d.getFiles();
-    while (files.hasNext()) {
-      var f = files.next();
-      if (f.isTrashed() || f.getName() === 'metadata.json') continue;
-      var dto = fileToDto_(f, d.getName());
-      dto.docDate = isDateFolderName_(d.getName()) ? d.getName() : '';
-      result.push(dto);
-    }
-  }
-  // 也可能檔案直接在分類夾
-  var topFiles = cat.getFiles();
-  while (topFiles.hasNext()) {
-    var tf = topFiles.next();
-    if (tf.isTrashed() || tf.getName() === 'metadata.json') continue;
-    result.push(fileToDto_(tf, categoryName));
-  }
-  return result;
-}
-
 function listAllCustomerFiles(customerFolderId) {
-  var dates = listCustomerDateKeys_(customerFolderId);
+  var grouped = listCustomerFilesGrouped_(customerFolderId);
   var all = [];
-  dates.forEach(function (d) {
-    all = all.concat(listDateFiles(customerFolderId, d));
+  Object.keys(grouped).forEach(function (k) {
+    all = all.concat(grouped[k] || []);
   });
   return all;
 }
 
-/** 依日期分組 */
+/** 依文件類型分組；日期-only 舊夾併入「其他」 */
 function listCustomerFilesGrouped_(customerFolderId) {
-  var dates = listCustomerDateKeys_(customerFolderId);
+  var categories = getCategoryTemplate_();
   var grouped = {};
-  dates.forEach(function (d) {
-    grouped[d] = listDateFiles(customerFolderId, d);
+  categories.forEach(function (cat) {
+    grouped[cat] = listCategoryFiles(customerFolderId, cat);
   });
+
+  var otherName = '';
+  for (var i = 0; i < categories.length; i++) {
+    if (String(categories[i]).indexOf('其他') >= 0) {
+      otherName = categories[i];
+      break;
+    }
+  }
+  if (!otherName && categories.length) otherName = categories[categories.length - 1];
+  if (!otherName) return grouped;
+
+  var customerFolder = DriveApp.getFolderById(customerFolderId);
+  var seen = {};
+  Object.keys(grouped).forEach(function (k) {
+    (grouped[k] || []).forEach(function (f) { seen[f.id] = true; });
+  });
+  var leftovers = [];
+  var subs = customerFolder.getFolders();
+  while (subs.hasNext()) {
+    var sub = subs.next();
+    if (sub.isTrashed()) continue;
+    var name = sub.getName();
+    if (categories.indexOf(name) >= 0) continue;
+    if (!isDateFolderName_(name)) continue;
+    pushFolderFiles_(sub, otherName, name, leftovers, seen);
+  }
+  if (leftovers.length) {
+    grouped[otherName] = (grouped[otherName] || []).concat(leftovers);
+  }
   return grouped;
 }
 
-function fileToDto_(f, dateOrCategory) {
+function fileToDto_(f, category) {
   return {
     id: f.getId(),
     name: f.getName(),
@@ -268,8 +231,8 @@ function fileToDto_(f, dateOrCategory) {
     url: f.getUrl(),
     downloadUrl: 'https://drive.google.com/uc?export=download&id=' + f.getId(),
     previewUrl: 'https://drive.google.com/file/d/' + f.getId() + '/view',
-    category: dateOrCategory || '',
-    docDate: isDateFolderName_(dateOrCategory) ? dateOrCategory : '',
+    category: category || '',
+    docDate: '',
     updatedAt: Utilities.formatDate(f.getLastUpdated(), 'Asia/Taipei', "yyyy-MM-dd'T'HH:mm:ss"),
     createdAt: Utilities.formatDate(f.getDateCreated(), 'Asia/Taipei', "yyyy-MM-dd'T'HH:mm:ss")
   };
@@ -289,11 +252,11 @@ function validateUpload_(fileName, mimeType) {
 
 function uploadFileToCategory(customerFolderId, categoryName, fileName, mimeType, base64Data, docDate) {
   validateUpload_(fileName, mimeType);
-  var dateFolder = ensureDateFolder_(customerFolderId, docDate || todayStr_());
+  var dateFolder = ensureCategoryDateFolder_(customerFolderId, categoryName, docDate || todayStr_());
   var bytes = Utilities.base64Decode(base64Data);
   var blob = Utilities.newBlob(bytes, mimeType || 'application/octet-stream', fileName);
   var file = dateFolder.createFile(blob);
-  var dto = fileToDto_(file, normalizeDocDate_(docDate || todayStr_()));
+  var dto = fileToDto_(file, categoryName);
   dto.docDate = normalizeDocDate_(docDate || todayStr_());
   return dto;
 }
@@ -305,7 +268,7 @@ function importDriveFileToCategory(customerFolderId, categoryName, fileId, mode,
   if (src.getMimeType() === 'application/vnd.google-apps.folder') {
     throw new Error('請選擇檔案（不支援整個資料夾）');
   }
-  var dateFolder = ensureDateFolder_(customerFolderId, docDate || todayStr_());
+  var dateFolder = ensureCategoryDateFolder_(customerFolderId, categoryName, docDate || todayStr_());
   var out;
   if (mode === 'shortcut') {
     try { out = dateFolder.createShortcut(src.getId()); }
@@ -326,7 +289,7 @@ function importDriveFileToCategory(customerFolderId, categoryName, fileId, mode,
   } else {
     out = src.makeCopy(src.getName(), dateFolder);
   }
-  var dto = fileToDto_(out, normalizeDocDate_(docDate || todayStr_()));
+  var dto = fileToDto_(out, categoryName);
   dto.docDate = normalizeDocDate_(docDate || todayStr_());
   return dto;
 }
@@ -403,33 +366,55 @@ function syncCustomersWithDrive_(opt) {
   return result;
 }
 
-/** 無分類模式：不再回傳文件類型模板 */
 function getCategoryTemplate_() {
-  return [];
+  var cached = cacheGet_('categories');
+  if (cached && cached.length) return cached;
+  var cats = getSetting('categories', null);
+  if (!cats || !cats.length) {
+    cats = (CONFIG.DEFAULT_CATEGORIES || []).slice();
+  }
+  if (typeof cats === 'string') {
+    try { cats = JSON.parse(cats); } catch (e) { cats = (CONFIG.DEFAULT_CATEGORIES || []).slice(); }
+  }
+  if (!Array.isArray(cats) || !cats.length) {
+    cats = (CONFIG.DEFAULT_CATEGORIES || []).slice();
+  }
+  cacheSet_('categories', cats);
+  return cats;
 }
 
 function defaultDocCategory_(categories) {
-  return '';
+  categories = categories || getCategoryTemplate_();
+  for (var i = 0; i < categories.length; i++) {
+    if (String(categories[i]).indexOf('保單') >= 0) return categories[i];
+  }
+  return categories[0] || (CONFIG.DEFAULT_DOC_CATEGORY_HINT || '02 保單');
 }
 
 function defaultFolderMeta_(categories) {
-  return {};
+  categories = categories || getCategoryTemplate_();
+  var meta = {};
+  categories.forEach(function (cat) {
+    meta[cat] = { done: false, count: 0 };
+  });
+  return meta;
 }
 
 function computeManualCompletion_(folderMeta, categories) {
-  var dates = folderMeta && typeof folderMeta === 'object' ? Object.keys(folderMeta) : [];
+  categories = categories && categories.length ? categories : getCategoryTemplate_();
+  folderMeta = folderMeta && typeof folderMeta === 'object' ? folderMeta : {};
   var filled = 0;
   var checklist = [];
-  dates.forEach(function (d) {
-    var m = folderMeta[d] || {};
+  categories.forEach(function (cat) {
+    var m = folderMeta[cat] || {};
     var count = Number(m.count) || 0;
     var done = !!m.done || count > 0;
     if (done) filled++;
-    checklist.push({ category: d, date: d, done: done, count: count });
+    checklist.push({ category: cat, done: done, count: count });
   });
-  var total = dates.length || 1;
-  var percent = dates.length ? Math.round((filled / total) * 100) : (filled ? 100 : 0);
-  return { percent: percent, filled: filled, total: dates.length, checklist: checklist };
+  var total = categories.length || 1;
+  var percent = Math.round((filled / total) * 100);
+  return { percent: percent, filled: filled, total: categories.length, checklist: checklist };
 }
 
 function deriveStatus_(completion, forced) {
