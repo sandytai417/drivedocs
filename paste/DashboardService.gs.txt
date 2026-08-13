@@ -59,7 +59,7 @@ function customerFromRowHomeFast_(row) {
     completion: completion,
     status: String(row.status || deriveStatus_(completion)),
     fileCount: fileCount,
-    isRenewal: typeof isRenewalFromMeta_ === 'function' ? isRenewalFromMeta_(folderMeta) : fileCount > 1,
+    isRenewal: typeof isRenewalFromMeta_ === 'function' ? isRenewalFromMeta_(folderMeta) : false,
     zhuyin: zhuyin,
     folderId: String(row.folderId || ''),
     folderMeta: folderMeta,
@@ -94,6 +94,8 @@ function getHomePayload_() {
     delete full[i]._meta;
   }
 
+  try { applyRenewalFromDrive_(full); } catch (eRen) { /* keep meta */ }
+
   var birthdays = listBirthdaysFromCustomers_(full);
   var bdayCustomers = (birthdays.customers || []).map(function (b) {
     return {
@@ -120,6 +122,7 @@ function getHomePayload_() {
       completion: c.completion,
       fileCount: c.fileCount,
       isRenewal: c.isRenewal,
+      dateCount: c.dateCount || 0,
       zhuyin: c.zhuyin,
       folderId: c.folderId || ''
     };

@@ -6,7 +6,7 @@
 
 var CONFIG = {
   APP_NAME: 'DriveDocs',
-  APP_VERSION: '260814c',
+  APP_VERSION: '260814d',
   TAGLINE: 'Organize Client Documents Directly in Google Drive.',
   /** 系統擁有者（私人單人版）— 僅顯示姓名，不含職稱 */
   OWNER_NAME: '楊以寧',

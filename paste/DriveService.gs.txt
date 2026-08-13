@@ -9,19 +9,60 @@ function isPolicyCategory_(name) {
   return String(name || '').indexOf('保單') >= 0;
 }
 
-/** 保單檔案數（續保判斷用） */
+/** 保單檔案數 */
 function policyFileCountFromMeta_(folderMeta) {
   folderMeta = folderMeta || {};
   var n = 0;
   Object.keys(folderMeta).forEach(function (k) {
+    if (k === 'dateCount') return;
     if (isPolicyCategory_(k)) n += Number(folderMeta[k].count) || 0;
   });
   return n;
 }
 
-/** 續保：保單資料夾至少 2 個檔案 */
+/** 續保：客戶底下有兩個或以上日期資料夾 */
+function isRenewalFromDateCount_(dateCount) {
+  return Number(dateCount) >= 2;
+}
+
 function isRenewalFromMeta_(folderMeta) {
-  return policyFileCountFromMeta_(folderMeta) >= 2;
+  folderMeta = folderMeta || {};
+  return isRenewalFromDateCount_(folderMeta.dateCount);
+}
+
+function applyRenewalFromDrive_(customers) {
+  customers = customers || [];
+  var map = {};
+  try { map = dateCountByFolderId_(); } catch (e) { map = {}; }
+  for (var i = 0; i < customers.length; i++) {
+    var id = String(customers[i].folderId || '').trim();
+    if (id && map[id] != null) {
+      customers[i].dateCount = map[id];
+      customers[i].isRenewal = isRenewalFromDateCount_(map[id]);
+    } else {
+      customers[i].isRenewal = isRenewalFromMeta_(customers[i].folderMeta);
+    }
+  }
+  return customers;
+}
+
+function persistCustomerStats_(customerId, fileCount, meta) {
+  meta = meta || {};
+  updateObjectById_(CONFIG.SHEETS.CUSTOMERS, customerId, {
+    fileCount: fileCount,
+    folderMeta: JSON.stringify(meta),
+    updatedAt: nowIso_()
+  });
+  try { invalidateDriveIndexCaches_(); } catch (e) { /* ignore */ }
+}
+
+function finishUploadStats_(c, fileCount, meta) {
+  c.fileCount = fileCount;
+  c.folderMeta = meta;
+  c.dateCount = Number(meta.dateCount) || 0;
+  c.policyFileCount = policyFileCountFromMeta_(meta);
+  c.isRenewal = isRenewalFromDateCount_(c.dateCount) || isRenewalFromMeta_(meta);
+  c.updatedAt = nowIso_();
 }
 
 function bumpFolderMetaCount_(folderMeta, category, delta) {
@@ -76,10 +117,11 @@ function customerFromRow_(row, opts) {
     status: String(row.status || deriveStatus_(completion)),
     fileCount: fileCount,
     policyFileCount: policyFileCountFromMeta_(folderMeta),
-    isRenewal: isRenewalFromMeta_(folderMeta),
+    dateCount: Number((folderMeta && folderMeta.dateCount) || row.dateCount) || 0,
     zhuyin: String(row.zhuyin || getZhuyinInitial(name)),
     givenZhuyin: light ? '' : getGivenNameZhuyin(name)
   };
+  out.isRenewal = isRenewalFromDateCount_(out.dateCount);
   // 列表／首頁：拿掉 folderMeta，大幅縮小 JSON（完成度已算好；續保已算好）
   if (opts.compact) {
     delete out.tags;
@@ -101,6 +143,7 @@ function listCustomers(sortBy) {
   var rows = filterRowsWithDriveFolder_(sheetToObjects_(CONFIG.SHEETS.CUSTOMERS)).map(function (r) {
     return customerFromRow_(r, { categories: categories, light: true, compact: true });
   });
+  applyRenewalFromDrive_(rows);
   if (sortBy === 'updated') {
     rows.sort(function (a, b) { return String(b.updatedAt).localeCompare(String(a.updatedAt)); });
   } else if (sortBy === 'completion') {
@@ -137,7 +180,13 @@ function getCustomer(id, opts) {
     c.tags = parseJsonSafe_(row.tags, []);
   }
   c.policyFileCount = policyFileCountFromMeta_(c.folderMeta);
-  c.isRenewal = isRenewalFromMeta_(c.folderMeta);
+  if (c.folderId) {
+    try {
+      c.folderMeta = stampCustomerDateCount_(c.folderId, c.folderMeta || {});
+      c.dateCount = Number(c.folderMeta.dateCount) || 0;
+    } catch (eDate) { /* keep */ }
+  }
+  c.isRenewal = isRenewalFromDateCount_(c.dateCount) || isRenewalFromMeta_(c.folderMeta);
 
   var filesByCategory = {};
   var cat;

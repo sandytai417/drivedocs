@@ -20,19 +20,11 @@ function uploadDocument(payload) {
   if (!c.folderId) throw new Error('客戶資料夾不存在');
 
   var file = uploadFileToCategory(c.folderId, category, fileName, mimeType, base64Data, docDate);
-  // 上傳後直接 +1，避免重掃整個 Drive 資料夾（以前這裡會卡住很久）
   var fileCount = (Number(c.fileCount) || 0) + 1;
   var meta = bumpFolderMetaCount_(c.folderMeta || {}, category, 1);
-  updateObjectById_(CONFIG.SHEETS.CUSTOMERS, customerId, {
-    fileCount: fileCount,
-    folderMeta: JSON.stringify(meta),
-    updatedAt: nowIso_()
-  });
-  c.fileCount = fileCount;
-  c.folderMeta = meta;
-  c.policyFileCount = policyFileCountFromMeta_(meta);
-  c.isRenewal = isRenewalFromMeta_(meta);
-  c.updatedAt = nowIso_();
+  meta = stampCustomerDateCount_(c.folderId, meta);
+  persistCustomerStats_(customerId, fileCount, meta);
+  finishUploadStats_(c, fileCount, meta);
 
   logActivity_(customerId, c.name, 'upload', '上傳新文件 · ' + c.name + ' · ' + category + '／' + docDate + ' · ' + fileName);
   bumpReport_('organized', 1);
@@ -63,16 +55,9 @@ function importDocument(payload) {
   var file = importDriveFileToCategory(c.folderId, category, fileId, mode, docDate);
   var fileCount = (Number(c.fileCount) || 0) + 1;
   var meta = bumpFolderMetaCount_(c.folderMeta || {}, category, 1);
-  updateObjectById_(CONFIG.SHEETS.CUSTOMERS, customerId, {
-    fileCount: fileCount,
-    folderMeta: JSON.stringify(meta),
-    updatedAt: nowIso_()
-  });
-  c.fileCount = fileCount;
-  c.folderMeta = meta;
-  c.policyFileCount = policyFileCountFromMeta_(meta);
-  c.isRenewal = isRenewalFromMeta_(meta);
-  c.updatedAt = nowIso_();
+  meta = stampCustomerDateCount_(c.folderId, meta);
+  persistCustomerStats_(customerId, fileCount, meta);
+  finishUploadStats_(c, fileCount, meta);
 
   var verb = mode === 'move' ? '移動雲端文件' : (mode === 'shortcut' ? '建立雲端捷徑' : '匯入雲端文件');
   logActivity_(customerId, c.name, 'import_drive', verb + ' · ' + c.name + ' · ' + category + '／' + docDate + ' · ' + file.name);
@@ -129,16 +114,9 @@ function uploadDocuments(payload) {
     }
   }
 
-  updateObjectById_(CONFIG.SHEETS.CUSTOMERS, customerId, {
-    fileCount: fileCount,
-    folderMeta: JSON.stringify(meta),
-    updatedAt: nowIso_()
-  });
-  c.fileCount = fileCount;
-  c.folderMeta = meta;
-  c.policyFileCount = policyFileCountFromMeta_(meta);
-  c.isRenewal = isRenewalFromMeta_(meta);
-  c.updatedAt = nowIso_();
+  meta = stampCustomerDateCount_(c.folderId, meta);
+  persistCustomerStats_(customerId, fileCount, meta);
+  finishUploadStats_(c, fileCount, meta);
 
   var okList = results.filter(function (r) { return r.ok; });
   logActivity_(customerId, c.name, 'upload_bulk',
@@ -220,16 +198,9 @@ function importDocuments(payload) {
     }
   }
 
-  updateObjectById_(CONFIG.SHEETS.CUSTOMERS, customerId, {
-    fileCount: fileCount,
-    folderMeta: JSON.stringify(meta),
-    updatedAt: nowIso_()
-  });
-  c.fileCount = fileCount;
-  c.folderMeta = meta;
-  c.policyFileCount = policyFileCountFromMeta_(meta);
-  c.isRenewal = isRenewalFromMeta_(meta);
-  c.updatedAt = nowIso_();
+  meta = stampCustomerDateCount_(c.folderId, meta);
+  persistCustomerStats_(customerId, fileCount, meta);
+  finishUploadStats_(c, fileCount, meta);
 
   var okList = results.filter(function (r) { return r.ok; });
   logActivity_(customerId, c.name, 'import_bulk',

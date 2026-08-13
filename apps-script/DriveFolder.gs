@@ -299,6 +299,65 @@ function isDateFolderName_(name) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) || isRocDateFolderName_(s);
 }
 
+/** 客戶底下有幾個不重複的日期資料夾（兩個以上＝續保） */
+function countDateFoldersIn_(folder) {
+  var seen = {};
+  if (!folder) return 0;
+  try {
+    var it = folder.getFolders();
+    while (it.hasNext()) {
+      var sub = it.next();
+      try {
+        if (sub.isTrashed()) continue;
+        var name = String(sub.getName() || '');
+        if (isDateFolderName_(name)) {
+          seen[name] = true;
+          continue;
+        }
+        var nested = sub.getFolders();
+        while (nested.hasNext()) {
+          var d = nested.next();
+          try {
+            if (!d.isTrashed() && isDateFolderName_(d.getName())) {
+              seen[String(d.getName())] = true;
+            }
+          } catch (e2) { /* ignore */ }
+        }
+      } catch (e) { /* ignore */ }
+    }
+  } catch (e3) { /* ignore */ }
+  return Object.keys(seen).length;
+}
+
+function stampCustomerDateCount_(customerFolderId, folderMeta) {
+  folderMeta = folderMeta && typeof folderMeta === 'object' ? folderMeta : {};
+  try {
+    var folder = DriveApp.getFolderById(String(customerFolderId));
+    folderMeta.dateCount = countDateFoldersIn_(folder);
+  } catch (e) {
+    if (folderMeta.dateCount == null) folderMeta.dateCount = 0;
+  }
+  return folderMeta;
+}
+
+function dateCountByFolderId_() {
+  var folders = listCustomerFoldersFromDriveCached_(false) || [];
+  var map = {};
+  for (var i = 0; i < folders.length; i++) {
+    var id = String(folders[i].folderId || '').trim();
+    if (id) map[id] = Number(folders[i].dateCount) || 0;
+  }
+  return map;
+}
+
+function invalidateDriveIndexCaches_() {
+  try { cacheDel_('driveFolders_v1'); } catch (e) { /* ignore */ }
+  try { sharedRemove_('driveFolders_v1'); } catch (e2) { /* ignore */ }
+  try { sharedRemove_('driveSyncResult_v1'); } catch (e3) { /* ignore */ }
+  try { cacheDel_('homePayload_v8'); } catch (e4) { /* ignore */ }
+  try { sharedRemove_('homePayload_v8'); } catch (e5) { /* ignore */ }
+}
+
 /** 客戶／{民國日期} 例如 1150813；相容舊西元資料夾 */
 function ensureDateFolder_(customerFolderId, docDate) {
   var ymd = normalizeDocDate_(docDate);
@@ -583,10 +642,13 @@ function collectCustomerFoldersUnder_(parent, out) {
       } catch (e2) { continue; }
       var cname = String(cust.getName() || '').trim();
       if (!cname) continue;
+      var dateCount = 0;
+      try { dateCount = countDateFoldersIn_(cust); } catch (e3) { dateCount = 0; }
       out.push({
         name: cname,
         zhuyin: zhName,
-        folderId: cust.getId()
+        folderId: cust.getId(),
+        dateCount: dateCount
       });
     }
   }
@@ -743,6 +805,7 @@ function syncCustomersWithDrive_(opt) {
   var used = {};
   var out = [];
   var imported = 0;
+  var dateCountChanged = false;
   var now = nowIso_();
   var folderMeta = JSON.stringify(defaultFolderMeta_(getCategoryTemplate_()));
 
@@ -762,9 +825,22 @@ function syncCustomersWithDrive_(opt) {
       existing.folderId = dfId;
       existing.name = dfName;
       existing.zhuyin = df.zhuyin || existing.zhuyin || '';
+      var metaObj = {};
+      try { metaObj = parseJsonSafe_(existing.folderMeta, {}) || {}; } catch (eMeta) { metaObj = {}; }
+      if (!metaObj || typeof metaObj !== 'object') metaObj = {};
+      var nextDates = Number(df.dateCount) || 0;
+      if (Number(metaObj.dateCount) !== nextDates) {
+        metaObj.dateCount = nextDates;
+        existing.folderMeta = JSON.stringify(metaObj);
+        dateCountChanged = true;
+      }
       out.push(existing);
     } else {
       imported++;
+      var newMeta = {};
+      try { newMeta = parseJsonSafe_(folderMeta, {}) || {}; } catch (eNew) { newMeta = {}; }
+      if (!newMeta || typeof newMeta !== 'object') newMeta = defaultFolderMeta_(getCategoryTemplate_());
+      newMeta.dateCount = Number(df.dateCount) || 0;
       out.push({
         id: newId_(),
         name: dfName,
@@ -777,7 +853,7 @@ function syncCustomersWithDrive_(opt) {
         tags: '[]',
         notes: '',
         folderId: dfId,
-        folderMeta: folderMeta,
+        folderMeta: JSON.stringify(newMeta),
         createdAt: now,
         updatedAt: now,
         completion: 0,
@@ -794,7 +870,7 @@ function syncCustomersWithDrive_(opt) {
     if (rid && !used[rid]) removedIds.push(rid);
   }
 
-  if (removedIds.length || imported) {
+  if (removedIds.length || imported || dateCountChanged) {
     rewriteCustomersSheet_(out);
     invalidateSheetCache_(CONFIG.SHEETS.CUSTOMERS);
     cacheLiveFolderIds_(liveIds);
