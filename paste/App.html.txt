@@ -249,17 +249,110 @@
     });
   }
 
-  function fileToBase64(file) {
+  /** 瀏覽器原生編碼，比自行 btoa 迴圈快 */
+  function readFileAsBase64_(file) {
     return new Promise(function (resolve, reject) {
       var reader = new FileReader();
       reader.onload = function () {
-        var result = String(reader.result || '');
-        var base64 = result.split(',')[1] || '';
-        resolve(base64);
+        var s = String(reader.result || '');
+        var i = s.indexOf(',');
+        resolve(i >= 0 ? s.slice(i + 1) : s);
       };
-      reader.onerror = reject;
+      reader.onerror = function () { reject(reader.error || new Error('讀檔失敗')); };
       reader.readAsDataURL(file);
     });
+  }
+
+  function isCompressibleImage_(file) {
+    var t = String((file && file.type) || '').toLowerCase();
+    return t === 'image/jpeg' || t === 'image/jpg' || t === 'image/png' ||
+      t === 'image/webp' || t === 'image/heic' || t === 'image/heif';
+  }
+
+  /** 大張照片先縮小，減少讀檔與上傳時間（保單掃描仍用原檔 PDF） */
+  function compressImageFile_(file) {
+    return new Promise(function (resolve) {
+      if (!file || !isCompressibleImage_(file) || file.size < 450000) {
+        resolve(file);
+        return;
+      }
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var maxEdge = 1920;
+          var w = img.naturalWidth || img.width || 0;
+          var h = img.naturalHeight || img.height || 0;
+          var scale = Math.min(1, maxEdge / Math.max(w, h, 1));
+          var cw = Math.max(1, Math.round(w * scale));
+          var ch = Math.max(1, Math.round(h * scale));
+          var canvas = document.createElement('canvas');
+          canvas.width = cw;
+          canvas.height = ch;
+          var ctx = canvas.getContext('2d');
+          if (!ctx) {
+            URL.revokeObjectURL(url);
+            resolve(file);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, cw, ch);
+          URL.revokeObjectURL(url);
+          canvas.toBlob(function (blob) {
+            if (!blob || blob.size >= file.size * 0.92) {
+              resolve(file);
+              return;
+            }
+            var name = String(file.name || 'photo.jpg').replace(/\.(png|webp|jpeg|jpg)$/i, '.jpg');
+            if (!/\.jpg$/i.test(name)) name += '.jpg';
+            try {
+              resolve(new File([blob], name, { type: 'image/jpeg' }));
+            } catch (e2) {
+              resolve(blob);
+            }
+          }, 'image/jpeg', 0.82);
+        } catch (e) {
+          try { URL.revokeObjectURL(url); } catch (e2) { /* ignore */ }
+          resolve(file);
+        }
+      };
+      img.onerror = function () {
+        try { URL.revokeObjectURL(url); } catch (e) { /* ignore */ }
+        resolve(file);
+      };
+      img.src = url;
+    });
+  }
+
+  async function prepareLocalFile_(file) {
+    var ready = await compressImageFile_(file);
+    var base64Data = await readFileAsBase64_(ready);
+    return {
+      fileName: ready.name || file.name,
+      mimeType: ready.type || file.type || 'application/octet-stream',
+      size: ready.size || 0,
+      base64Data: base64Data
+    };
+  }
+
+  function fileToBase64(file) {
+    return prepareLocalFile_(file).then(function (p) { return p.base64Data; });
+  }
+
+  async function mapPool_(items, limit, fn) {
+    var out = new Array(items.length);
+    var cursor = 0;
+    async function worker_() {
+      while (cursor < items.length) {
+        var idx = cursor;
+        cursor += 1;
+        out[idx] = await fn(items[idx], idx);
+      }
+    }
+    var n = Math.max(1, Math.min(limit || 2, items.length));
+    var workers = [];
+    for (var w = 0; w < n; w++) workers.push(worker_());
+    await Promise.all(workers);
+    return out;
   }
 
   function ownerName_() {
@@ -286,7 +379,7 @@
   function appVersion_() {
     return (state.app && state.app.appVersion) ||
       (state.app && state.app.settings && state.app.settings.appVersion) ||
-      '260813x';
+      '260813y';
   }
 
   function todayLocalYmd_() {
@@ -1004,7 +1097,8 @@
           '</div></section>') +
         '<section class="card"><div class="card__hd"><div><h2 class="card__title">檔案</h2><p class="card__sub">本機或雲端既有檔</p></div></div><div class="card__bd">' +
           (toActivity ? '' : '') +
-          '<div class="dropzone" id="dropzone"><p class="dropzone__title">拖曳檔案到這裡</p><p>也可從雲端硬碟直接選取</p>' +
+          '<div class="dropzone" id="dropzone"><p class="dropzone__title">拖曳檔案到這裡</p>' +
+          '<p class="upload-hint">從雲端硬碟選取最快（不用讀本機）。本機照片會自動縮小再上傳。</p>' +
           '<p style="margin-top:1rem;display:flex;flex-wrap:wrap;gap:8px;justify-content:center">' +
             '<button type="button" class="btn btn--primary" id="btn-pick-drive">從雲端硬碟選取</button>' +
             '<label class="btn">選擇本機檔案<input type="file" id="file-input" hidden multiple accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx,.ppt,.pptx"></label>' +
@@ -1199,16 +1293,20 @@
       // 讀檔平行、單次呼叫送出
       var idxAll = {};
       queue.forEach(function (_, k) { idxAll[k] = true; });
-      markQueue_(idxAll, '讀檔', 15);
+      var localOnly = {};
+      queue.forEach(function (it, k) {
+        if (it.source !== 'drive') localOnly[k] = true;
+      });
+      if (Object.keys(localOnly).length) markQueue_(localOnly, '讀檔／壓縮', 15);
 
-      var files = await Promise.all(queue.map(async function (it) {
+      var files = await mapPool_(queue, 2, async function (it) {
         if (it.source === 'drive') {
           return { name: it.name, fileId: it.driveFileId, driveFileId: it.driveFileId,
                    size: it.size, mimeType: it.mimeType };
         }
-        var b64 = await fileToBase64(it.file);
-        return { name: it.name, size: it.size, mimeType: it.mimeType, base64Data: b64 };
-      }));
+        var p = await prepareLocalFile_(it.file);
+        return { name: p.fileName, size: p.size, mimeType: p.mimeType, base64Data: p.base64Data };
+      });
       setUploadProgress_({ label: '上傳到本週活動', percent: 60, done: 0, total: total });
       markQueue_(idxAll, '上傳中', 60);
 
@@ -1281,37 +1379,56 @@
       tick_(drivePos.length, '雲端匯入完成');
     }
 
-    // (2) 本機檔案：平行讀 base64，再依 ~10MB 分批呼叫
+    // (2) 本機檔案：一次只讀一批，讀下一批與上傳重疊
     if (localPos.length) {
-      var idxSet2 = {}; localPos.forEach(function (k) { idxSet2[k] = true; });
-      markQueue_(idxSet2, '讀檔', 25);
-      if (btn) btn.textContent = '讀取檔案…';
-      var b64s = await Promise.all(localPos.map(function (k) { return fileToBase64(queue[k].file); }));
-      var items = localPos.map(function (k, i) {
+      var localItems = localPos.map(function (k) {
         var it = queue[k];
         return {
           _pos: k,
-          category: it.docType || state.uploadCategory,
-          fileName: it.name,
-          mimeType: it.mimeType,
-          base64Data: b64s[i],
-          docDate: docDate,
-          size: (b64s[i] || '').length
+          file: it.file,
+          size: Number(it.size) || 0,
+          category: it.docType || state.uploadCategory
         };
       });
-      var batches = chunkBySize_(items, 10 * 1024 * 1024);
+      var batches = chunkBySize_(localItems, 8 * 1024 * 1024);
+
+      async function prepareBatch_(batch) {
+        var idxSet = {};
+        batch.forEach(function (x) { idxSet[x._pos] = true; });
+        markQueue_(idxSet, '讀檔／壓縮', 20);
+        if (btn) btn.textContent = '讀檔／壓縮…';
+        return mapPool_(batch, 2, async function (x) {
+          var p = await prepareLocalFile_(x.file);
+          return {
+            _pos: x._pos,
+            category: x.category,
+            fileName: p.fileName,
+            mimeType: p.mimeType,
+            base64Data: p.base64Data,
+            docDate: docDate
+          };
+        });
+      }
+
+      var pending = batches.length ? prepareBatch_(batches[0]) : null;
       for (var b = 0; b < batches.length; b++) {
-        var batch = batches[b];
-        var posInBatch = batch.map(function (x) { return x._pos; });
-        var batchIdx = {}; posInBatch.forEach(function (k) { batchIdx[k] = true; });
+        var payloadItems = await pending;
+        pending = (b + 1 < batches.length) ? prepareBatch_(batches[b + 1]) : null;
+        var posInBatch = payloadItems.map(function (x) { return x._pos; });
+        var batchIdx = {};
+        posInBatch.forEach(function (k) { batchIdx[k] = true; });
         markQueue_(batchIdx, '上傳中', 65);
         if (btn) btn.textContent = '上傳中 ' + (b + 1) + '/' + batches.length;
-        var payloadItems = batch.map(function (x) {
-          var o = {};
-          for (var kk in x) if (kk !== '_pos' && kk !== 'size') o[kk] = x[kk];
-          return o;
+        var sendItems = payloadItems.map(function (x) {
+          return {
+            category: x.category,
+            fileName: x.fileName,
+            mimeType: x.mimeType,
+            base64Data: x.base64Data,
+            docDate: x.docDate
+          };
         });
-        var r = await run('api_uploadDocuments', { customerId: customerId, items: payloadItems });
+        var r = await run('api_uploadDocuments', { customerId: customerId, items: sendItems });
         applyBatchResult_(r, posInBatch);
         tick_(posInBatch.length, '上傳中 ' + done + '/' + total);
       }
@@ -1707,10 +1824,10 @@
         var filesInput = $('ev-files').files;
         var fileList = [];
         for (var i = 0; i < (filesInput || []).length; i++) fileList.push(filesInput[i]);
-        setEvBar({ label: '讀取檔案', percent: 15 });
-        var b64s = await Promise.all(fileList.map(function (f) { return fileToBase64(f); }));
-        var files = fileList.map(function (f, k) {
-          return { name: f.name, size: f.size, mimeType: f.type, base64Data: b64s[k] };
+        setEvBar({ label: '讀檔／壓縮', percent: 15 });
+        var prepared = await mapPool_(fileList, 2, function (f) { return prepareLocalFile_(f); });
+        var files = prepared.map(function (p) {
+          return { name: p.fileName, size: p.size, mimeType: p.mimeType, base64Data: p.base64Data };
         });
         setEvBar({ label: '寫入活動資料夾', percent: 60 });
         var chosenPeriod = ($('ev-period').value || period).trim();
@@ -2062,7 +2179,7 @@
     }
     var bdayOn = !!s.birthdayReminderEnabled;
     content.innerHTML =
-      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260813x') + '</p></section>' +
+      '<section class="greeting"><h1>設定</h1><p>Drive 根目錄 · 版本 v' + escapeHtml(appVersion_() || '260813y') + '</p></section>' +
       '<div class="stack"><section class="card"><div class="card__hd"><div><h2 class="card__title">雲端硬碟路徑</h2>' +
         '<p class="card__sub">客戶與本週活動分開存放</p></div></div><div class="card__bd">' +
         '<p class="upload-hint">客戶：' + escapeHtml(pathCustomers) + '</p>' +
@@ -2207,16 +2324,16 @@
   function paintBootVersion_(extra) {
     var hint = $('boot-hint');
     if (!hint) return;
-    var ver = appVersion_() || '260813x';
+    var ver = appVersion_() || '260813y';
     hint.textContent = (extra || '載入中') + ' · v' + ver;
   }
 
   async function boot() {
     try {
-      try { console.log('[DriveDocs] boot · v260813x'); } catch (e) { /* ignore */ }
+      try { console.log('[DriveDocs] boot · v260813y'); } catch (e) { /* ignore */ }
       // 立刻顯示介面（不等伺服器）
       state.app = {
-        appVersion: '260813x',
+        appVersion: '260813y',
         user: { name: '楊以寧', display: '楊以寧', role: '', email: '' },
         settings: { rootFolderName: '客戶資料', categories: DEFAULT_CATEGORIES_CLIENT_.slice() },
         initialized: true
@@ -2281,7 +2398,7 @@
         animateBars(content);
       }).catch(function (e2) {
         $('content').innerHTML = '<div class="card card__bd"><p>' + escapeHtml((err && err.message) || e2.message || e2) +
-          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260813x。</p></div>';
+          '</p><p class="upload-hint">請確認已貼上最新 Setting.gs（含 api_boot）並「部署新版本」。版本應顯示 v260813y。</p></div>';
       });
     });
     return p;
